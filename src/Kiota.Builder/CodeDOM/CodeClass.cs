@@ -30,9 +30,12 @@ public enum CodeClassKind
 /// <summary>
 /// CodeClass represents an instance of a Class to be generated in source code
 /// </summary>
-public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITypeDefinition, IDiscriminatorInformationHolder, IDeprecableElement
+public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITypeDefinition, IDiscriminatorInformationHolder, IDeprecableElement, IAccessibleElement
 {
     private readonly ConcurrentDictionary<string, CodeProperty> PropertiesByWireName = new(StringComparer.OrdinalIgnoreCase);
+
+    public AccessModifier Access { get; set; } = AccessModifier.Public;
+
     public bool IsErrorDefinition
     {
         get; set;
@@ -44,6 +47,14 @@ public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITy
     public CodeComposedTypeBase? OriginalComposedType
     {
         get; set;
+    }
+    public string GetComponentSchemaName(CodeNamespace modelsNamespace)
+    {
+        if (Kind is not CodeClassKind.Model ||
+                Parent is not CodeNamespace parentNamespace ||
+                !parentNamespace.IsChildOf(modelsNamespace))
+            return string.Empty;
+        return $"{parentNamespace.Name[(modelsNamespace.Name.Length + 1)..]}.{Name}";
     }
     public CodeIndexer? Indexer => InnerChildElements.Values.OfType<CodeIndexer>().FirstOrDefault(static x => !x.IsLegacyIndexer);
     public void AddIndexer(params CodeIndexer[] indexers)

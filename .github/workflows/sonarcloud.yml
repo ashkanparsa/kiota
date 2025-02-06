@@ -13,18 +13,20 @@ on:
         "**.md",
         ".vscode/**",
         "**.svg",
+        "vscode/**",
       ]
   pull_request:
     types: [opened, synchronize, reopened]
-    paths-ignore:
+    paths:
       [
-        "abstractions/**",
-        "authentication/**",
-        "serialization/**",
-        "http/**",
-        "**.md",
-        ".vscode/**",
-        "**.svg",
+        "!abstractions/**",
+        "!authentication/**",
+        "!serialization/**",
+        "!http/**",
+        "!**.md",
+        "!.vscode/**",
+        "!**.svg",
+        "!vscode/**",
       ]
 
 permissions:
@@ -58,10 +60,9 @@ jobs:
           java-version: 17
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
-        with: # At the moment the scanner requires dotnet 5 https://www.nuget.org/packages/dotnet-sonarscanner
+        with:
           dotnet-version: |
-            5.x
-            8.x
+            9.x
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Shallow clones should be disabled for a better relevancy of analysis
