@@ -13,7 +13,7 @@ namespace Kiota.Builder.Refiners;
 public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
 {
     public RubyRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
@@ -63,7 +63,7 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
             cancellationToken.ThrowIfCancellationRequested();
             AddParsableImplementsForModelClasses(generatedCode, "MicrosoftKiotaAbstractions::Parsable");
             AddDefaultImports(generatedCode, defaultUsingEvaluators);
-            RemoveUntypedNodePropertyValues(generatedCode);
+            RemoveUntypedNodeTypeValues(generatedCode);
             CorrectCoreType(generatedCode, CorrectMethodType, CorrectPropertyType, CorrectImplements);
             cancellationToken.ThrowIfCancellationRequested();
             ReplacePropertyNames(generatedCode,

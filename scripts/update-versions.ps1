@@ -6,7 +6,8 @@ function Get-LatestNugetVersion {
 
     $url = "https://api.nuget.org/v3/registration5-gz-semver2/$($packageId.ToLowerInvariant())/index.json"
     $response = Invoke-RestMethod -Uri $url -Method Get
-    $response.items[0].upper
+    $version = $response.items | Select-Object -ExpandProperty upper | ForEach-Object { [System.Management.Automation.SemanticVersion]$_ } | sort-object | Select-Object -Last 1
+    $version.ToString()
 }
 # Get the latest github release
 function Get-LatestGithubRelease {
@@ -104,6 +105,13 @@ function Retry-Command {
     }
 }
 
+function Get-QueryName {
+    Param(
+        $dependency
+    )
+    $dependency.QueryName ?? $dependency.Name
+}
+
 # Read the appsettings.json file
 $mainSettings = Join-Path -Path $PSScriptRoot -ChildPath "..\src\kiota\appsettings.json"
 $appSettings = Get-Content -Path $mainSettings -Raw | ConvertFrom-Json
@@ -112,8 +120,12 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
     $language = $appSettings.Languages.$languageName
     if ($languageName -eq "CSharp" -or $languageName -eq "CLI") {
         foreach ($dependency in $language.Dependencies) {
+            if ($null -ne $dependency.MaximumVersion -and $dependency.MaximumVersion -eq $dependency.Version) {
+                Write-Information "Skipping $($dependency.Name) as it's already at the maximum version"
+                continue
+            }
             Retry-Command -ScriptBlock {
-                $latestVersion = Get-LatestNugetVersion -packageId $dependency.Name
+                $latestVersion = Get-LatestNugetVersion -packageId (Get-QueryName -dependency $dependency)
                 Write-Information "Updating $($dependency.Name) from $($dependency.Version) to $latestVersion"
                 $dependency.Version = $latestVersion
             }
@@ -121,8 +133,12 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
     }
     elseif ($languageName -eq "Go") {
         foreach ($dependency in $language.Dependencies) {
+            if ($null -ne $dependency.MaximumVersion -and $dependency.MaximumVersion -eq $dependency.Version) {
+                Write-Information "Skipping $($dependency.Name) as it's already at the maximum version"
+                continue
+            }
             Retry-Command -ScriptBlock {
-                $latestVersion = Get-LatestGithubRelease -packageId $dependency.Name
+                $latestVersion = Get-LatestGithubRelease -packageId (Get-QueryName -dependency $dependency)
                 Write-Information "Updating $($dependency.Name) from $($dependency.Version) to $latestVersion"
                 $dependency.Version = $latestVersion
             }
@@ -130,8 +146,12 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
     }
     elseif ($languageName -eq "TypeScript") {
         foreach ($dependency in $language.Dependencies) {
+            if ($null -ne $dependency.MaximumVersion -and $dependency.MaximumVersion -eq $dependency.Version) {
+                Write-Information "Skipping $($dependency.Name) as it's already at the maximum version"
+                continue
+            }
             Retry-Command -ScriptBlock {
-                $latestVersion = Get-LatestNpmVersion -packageId $dependency.Name
+                $latestVersion = Get-LatestNpmVersion -packageId (Get-QueryName -dependency $dependency)
                 Write-Information "Updating $($dependency.Name) from $($dependency.Version) to $latestVersion"
                 $dependency.Version = $latestVersion
             }
@@ -139,8 +159,12 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
     }
     elseif ($languageName -eq "Java") {
         foreach ($dependency in $language.Dependencies) {
+            if ($null -ne $dependency.MaximumVersion -and $dependency.MaximumVersion -eq $dependency.Version) {
+                Write-Information "Skipping $($dependency.Name) as it's already at the maximum version"
+                continue
+            }
             Retry-Command -ScriptBlock {
-                $latestVersion = Get-LatestMavenVersion -packageId $dependency.Name.Replace("jakarta.annotation:jakarta.annotation-api", "jakarta/annotation.jakarta|annotation-api")
+                $latestVersion = Get-LatestMavenVersion -packageId (Get-QueryName -dependency $dependency)
                 Write-Information "Updating $($dependency.Name) from $($dependency.Version) to $latestVersion"
                 $dependency.Version = $latestVersion
             }
@@ -148,8 +172,12 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
     }
     elseif ($languageName -eq "PHP") {
         foreach ($dependency in $language.Dependencies) {
+            if ($null -ne $dependency.MaximumVersion -and $dependency.MaximumVersion -eq $dependency.Version) {
+                Write-Information "Skipping $($dependency.Name) as it's already at the maximum version"
+                continue
+            }
             Retry-Command -ScriptBlock {
-                $latestVersion = Get-LatestComposerVersion -packageId $dependency.Name
+                $latestVersion = Get-LatestComposerVersion -packageId (Get-QueryName -dependency $dependency)
                 Write-Information "Updating $($dependency.Name) from $($dependency.Version) to $latestVersion"
                 $dependency.Version = $latestVersion
             }
@@ -157,8 +185,12 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
     }
     elseif ($languageName -eq "Python") {
         foreach ($dependency in $language.Dependencies) {
+            if ($null -ne $dependency.MaximumVersion -and $dependency.MaximumVersion -eq $dependency.Version) {
+                Write-Information "Skipping $($dependency.Name) as it's already at the maximum version"
+                continue
+            }
             Retry-Command -ScriptBlock {
-                $latestVersion = Get-LatestPypiVersion -packageId $dependency.Name
+                $latestVersion = Get-LatestPypiVersion -packageId (Get-QueryName -dependency $dependency)
                 Write-Information "Updating $($dependency.Name) from $($dependency.Version) to $latestVersion"
                 $dependency.Version = $latestVersion
             }
@@ -166,8 +198,12 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
     }
     elseif ($languageName -eq "Ruby") {
         foreach ($dependency in $language.Dependencies) {
+            if ($null -ne $dependency.MaximumVersion -and $dependency.MaximumVersion -eq $dependency.Version) {
+                Write-Information "Skipping $($dependency.Name) as it's already at the maximum version"
+                continue
+            }
             Retry-Command -ScriptBlock {
-                $latestVersion = Get-LatestRubygemVersion -packageId $dependency.Name
+                $latestVersion = Get-LatestRubygemVersion -packageId (Get-QueryName -dependency $dependency)
                 Write-Information "Updating $($dependency.Name) from $($dependency.Version) to $latestVersion"
                 $dependency.Version = $latestVersion
             }
@@ -179,5 +215,5 @@ foreach ($languageName in ($appSettings.Languages | Get-Member -MemberType NoteP
 }
 
 # Write the updated appsettings.json file
-$appSettings | ConvertTo-Json -Depth 100 | Set-Content -Path $mainSettings
+$appSettings | ConvertTo-Json -Depth 100 | Set-Content -Path $mainSettings -NoNewLine
 

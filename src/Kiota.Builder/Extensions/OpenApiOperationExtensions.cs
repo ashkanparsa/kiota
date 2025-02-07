@@ -41,11 +41,20 @@ public static class OpenApiOperationExtensions
         return operation.RequestBody?.Content
                             .GetValidSchemas(structuredMimeTypes).FirstOrDefault();
     }
-    private static readonly StructuredMimeTypesCollection multipartMimeTypes = new(new string[] { "multipart/form-data" });
+    private static readonly StructuredMimeTypesCollection multipartMimeTypes = new(["multipart/form-data"]);
     internal static bool IsMultipartFormDataSchema(this IDictionary<string, OpenApiMediaType> source, StructuredMimeTypesCollection structuredMimeTypes)
     {
         return source.GetValidSchemas(structuredMimeTypes).FirstOrDefault() is OpenApiSchema schema &&
         source.GetValidSchemas(multipartMimeTypes).FirstOrDefault() == schema;
+    }
+    internal static bool IsMultipartTopMimeType(this IDictionary<string, OpenApiMediaType> source, StructuredMimeTypesCollection structuredMimeTypes)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(structuredMimeTypes);
+        if (structuredMimeTypes.Count == 0) return false;
+        if (!source.ContainsKey(multipartMimeTypes.First())) return false;
+        if (source.Count == 1 || !source.Keys.Where(static x => !multipartMimeTypes.Contains(x)).Any(structuredMimeTypes.Contains)) return true;
+        return structuredMimeTypes.First() == multipartMimeTypes.First();
     }
     internal static IEnumerable<OpenApiSchema> GetValidSchemas(this IDictionary<string, OpenApiMediaType> source, StructuredMimeTypesCollection structuredMimeTypes)
     {

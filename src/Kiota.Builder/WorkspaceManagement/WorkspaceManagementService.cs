@@ -40,7 +40,7 @@ public class WorkspaceManagementService
     private readonly LockManagementService lockManagementService = new();
     private readonly WorkspaceConfigurationStorageService workspaceConfigurationStorageService;
     private readonly DescriptionStorageService descriptionStorageService;
-    public async Task<bool> IsConsumerPresent(string clientName, CancellationToken cancellationToken = default)
+    public async Task<bool> IsConsumerPresentAsync(string clientName, CancellationToken cancellationToken = default)
     {
         if (!UseKiotaConfig) return false;
         var (wsConfig, _) = await workspaceConfigurationStorageService.GetWorkspaceConfigurationAsync(cancellationToken).ConfigureAwait(false);
@@ -77,7 +77,7 @@ public class WorkspaceManagementService
             manifest.ApiDependencies.AddOrReplace(generationConfiguration.ClientClassName, generationConfiguration.ToApiDependency(inputConfigurationHash, templatesWithOperations, WorkingDirectory));
             await workspaceConfigurationStorageService.UpdateWorkspaceConfigurationAsync(wsConfig, manifest, cancellationToken).ConfigureAwait(false);
             if (descriptionStream != Stream.Null)
-                await descriptionStorageService.UpdateDescriptionAsync(generationConfiguration.ClientClassName, descriptionStream, new Uri(generationConfiguration.OpenAPIFilePath).GetFileExtension(), cancellationToken).ConfigureAwait(false);
+                await descriptionStorageService.UpdateDescriptionAsync(generationConfiguration.ClientClassName, descriptionStream, generationConfiguration.OpenAPIFilePath.GetFileExtension(), cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -331,7 +331,7 @@ public class WorkspaceManagementService
         }
         var generationConfiguration = new GenerationConfiguration();
         lockInfo.UpdateGenerationConfigurationFromLock(generationConfiguration);
-        generationConfiguration.OutputPath = "./" + Path.GetRelativePath(WorkingDirectory, lockFileDirectory);
+        generationConfiguration.OutputPath = "./" + Path.GetRelativePath(WorkingDirectory, lockFileDirectory).NormalizePathSeparators();
         if (!string.IsNullOrEmpty(clientName))
         {
             generationConfiguration.ClientClassName = clientName;

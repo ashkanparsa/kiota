@@ -20,13 +20,15 @@ public sealed class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.Java, false)]
     [InlineData(GenerationLanguage.TypeScript, false)]
     [InlineData(GenerationLanguage.Go, false)]
+    [InlineData(GenerationLanguage.Dart, false)]
     [InlineData(GenerationLanguage.Ruby, false)]
     [InlineData(GenerationLanguage.CSharp, true)]
     [InlineData(GenerationLanguage.Java, true)]
     [InlineData(GenerationLanguage.PHP, false)]
     [InlineData(GenerationLanguage.TypeScript, true)]
+    [InlineData(GenerationLanguage.Dart, true)]
     [Theory]
-    public async Task GeneratesTodo(GenerationLanguage language, bool backingStore)
+    public async Task GeneratesTodoAsync(GenerationLanguage language, bool backingStore)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -46,13 +48,15 @@ public sealed class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.Java, false)]
     [InlineData(GenerationLanguage.TypeScript, false)]
     [InlineData(GenerationLanguage.Go, false)]
+    [InlineData(GenerationLanguage.Dart, false)]
     [InlineData(GenerationLanguage.Ruby, false)]
     [InlineData(GenerationLanguage.CSharp, true)]
     [InlineData(GenerationLanguage.Java, true)]
     [InlineData(GenerationLanguage.PHP, false)]
     [InlineData(GenerationLanguage.TypeScript, true)]
+    [InlineData(GenerationLanguage.Dart, true)]
     [Theory]
-    public async Task GeneratesModelWithDictionary(GenerationLanguage language, bool backingStore)
+    public async Task GeneratesModelWithDictionaryAsync(GenerationLanguage language, bool backingStore)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -72,13 +76,15 @@ public sealed class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.Java, false)]
     [InlineData(GenerationLanguage.TypeScript, false)]
     [InlineData(GenerationLanguage.Go, false)]
+    [InlineData(GenerationLanguage.Dart, false)]
     [InlineData(GenerationLanguage.Ruby, false)]
     [InlineData(GenerationLanguage.CSharp, true)]
     [InlineData(GenerationLanguage.Java, true)]
     [InlineData(GenerationLanguage.PHP, false)]
     [InlineData(GenerationLanguage.TypeScript, true)]
+    [InlineData(GenerationLanguage.Dart, true)]
     [Theory]
-    public async Task GeneratesResponseWithMultipleReturnFormats(GenerationLanguage language, bool backingStore)
+    public async Task GeneratesResponseWithMultipleReturnFormatsAsync(GenerationLanguage language, bool backingStore)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -97,12 +103,13 @@ public sealed class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.CSharp)]
     [InlineData(GenerationLanguage.Java)]
     [InlineData(GenerationLanguage.Go)]
+    [InlineData(GenerationLanguage.Dart)]
     [InlineData(GenerationLanguage.Ruby)]
     [InlineData(GenerationLanguage.Python)]
     [InlineData(GenerationLanguage.TypeScript)]
     [InlineData(GenerationLanguage.PHP)]
     [Theory]
-    public async Task GeneratesErrorsInliningParents(GenerationLanguage language)
+    public async Task GeneratesErrorsInliningParentsAsync(GenerationLanguage language)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -119,12 +126,13 @@ public sealed class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.CSharp)]
     [InlineData(GenerationLanguage.Java)]
     [InlineData(GenerationLanguage.Go)]
+    [InlineData(GenerationLanguage.Dart)]
     [InlineData(GenerationLanguage.Ruby)]
     [InlineData(GenerationLanguage.Python)]
     [InlineData(GenerationLanguage.TypeScript)]
     [InlineData(GenerationLanguage.PHP)]
     [Theory]
-    public async Task GeneratesCorrectEnums(GenerationLanguage language)
+    public async Task GeneratesCorrectEnumsAsync(GenerationLanguage language)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -140,7 +148,7 @@ public sealed class GenerateSample : IDisposable
     }
     [InlineData(GenerationLanguage.Java)]
     [Theory]
-    public async Task GeneratesIdiomaticChildrenNames(GenerationLanguage language)
+    public async Task GeneratesIdiomaticChildrenNamesAsync(GenerationLanguage language)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -167,6 +175,7 @@ public sealed class GenerateSample : IDisposable
     }
     [InlineData(GenerationLanguage.CSharp)]
     [InlineData(GenerationLanguage.Go)]
+    [InlineData(GenerationLanguage.Dart)]
     [InlineData(GenerationLanguage.Java)]
     [InlineData(GenerationLanguage.PHP)]
     [InlineData(GenerationLanguage.Python)]
@@ -174,7 +183,7 @@ public sealed class GenerateSample : IDisposable
     // [InlineData(GenerationLanguage.TypeScript)] // TODO: the "getQueryParameter" is added to the interface V1RequestBuilderGetQueryParameters but is not getting written because removed by ReplaceRequestConfigurationsQueryParamsWithInterfaces in the refiner
     // [InlineData(GenerationLanguage.Swift)] // TODO: incomplete
     [Theory]
-    public async Task GeneratesUritemplateHints(GenerationLanguage language)
+    public async Task GeneratesUritemplateHintsAsync(GenerationLanguage language)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -200,6 +209,9 @@ public sealed class GenerateSample : IDisposable
         {
             case GenerationLanguage.CSharp:
                 Assert.Contains("[QueryParameter(\"startDateTime\")]", fullText);
+                break;
+            case GenerationLanguage.Dart:
+                Assert.Contains("'EndDateTime' : endDateTime", fullText);
                 break;
             case GenerationLanguage.Go:
                 Assert.Contains("`uriparametername:\"startDateTime\"`", fullText);

@@ -132,13 +132,10 @@ internal abstract class BaseKiotaCommandHandler : ICommandHandler, IDisposable
             DisplayWarning(result);
     }
     public abstract Task<int> InvokeAsync(InvocationContext context);
-    private readonly List<IDisposable> disposables = new();
+    private readonly List<IDisposable> disposables = [];
     protected (ILoggerFactory, ILogger<T>) GetLoggerAndFactory<T>(InvocationContext context, string logFileRootPath = "")
     {
         LogLevel logLevel = context.ParseResult.GetValueForOption(LogLevelOption);
-#if DEBUG
-        logLevel = logLevel > LogLevel.Debug ? LogLevel.Debug : logLevel;
-#endif
         var loggerFactory = LoggerFactory.Create(builder =>
         {
             var logFileAbsoluteRootPath = GetAbsolutePath(logFileRootPath);
@@ -290,13 +287,14 @@ internal abstract class BaseKiotaCommandHandler : ICommandHandler, IDisposable
             DisplayHint("Hint: multiple matches found, use the key as the search term to display the details of a specific description.", example);
         }
     }
+    private static string GenerateCommand => KiotaHost.IsConfigPreviewEnabled.Value ? "client add" : "generate";
     protected void DisplayGenerateHint(string path, string manifest, IEnumerable<string> includedPaths, IEnumerable<string> excludedPaths)
     {
         var includedPathsSuffix = (includedPaths.Any() ? " -i " : string.Empty) + string.Join(" -i ", includedPaths.Select(static x => $"\"{x}\""));
         var excludedPathsSuffix = (excludedPaths.Any() ? " -e " : string.Empty) + string.Join(" -e ", excludedPaths.Select(static x => $"\"{x}\""));
         var sourceArg = GetSourceArg(path, manifest);
-        var example = $"Example: kiota generate -l <language> -o <output path> {sourceArg}{includedPathsSuffix}{excludedPathsSuffix}";
-        DisplayHint("Hint: use kiota generate to generate a client for the OpenAPI description.", example);
+        var example = $"Example: kiota {GenerateCommand} -l <language> -o <output path> {sourceArg}{includedPathsSuffix}{excludedPathsSuffix}";
+        DisplayHint($"Hint: use kiota {GenerateCommand} to generate a client for the OpenAPI description.", example);
     }
     protected void DisplayGenerateAdvancedHint(IEnumerable<string> includePaths, IEnumerable<string> excludePaths, string path, string manifest, string commandName = "generate")
     {
@@ -313,8 +311,8 @@ internal abstract class BaseKiotaCommandHandler : ICommandHandler, IDisposable
     }
     protected void DisplayUrlInformation(string? apiRootUrl, bool isPlugin = false)
     {
-        if (!string.IsNullOrEmpty(apiRootUrl))
-            DisplayInfo($"{(isPlugin ? "Plugin" : "Client")} base url set to {apiRootUrl}");
+        if (!string.IsNullOrEmpty(apiRootUrl) && !isPlugin)
+            DisplayInfo($"Client base url set to {apiRootUrl}");
     }
     protected void DisplayGenerateCommandHint()
     {
@@ -326,6 +324,18 @@ internal abstract class BaseKiotaCommandHandler : ICommandHandler, IDisposable
         var sourceArg = GetSourceArg(path, manifest);
         DisplayHint("Hint: use the info command to get the list of dependencies you need to add to your project.",
                     $"Example: kiota info {sourceArg} -l {language}");
+    }
+    protected void DisplayDependenciesHint(GenerationLanguage generationLanguage)
+    {
+        DisplayHint("Legend:",
+                    "- Abstractions dependencies define the core concepts of the language. Required at build time.",
+                    "- Authentication dependencies implement authentication providers. Optional at runtime.",
+                    "- Additional dependencies are required in addition to the abstractions or bundle. Required at build time.",
+                    "- Bundle dependencies include abstractions, serialization and HTTP dependencies for simpler management.",
+                    "- HTTP dependencies implement the request adapter with a specific HTTP client. Required at runtime.",
+                    "- Serialization dependencies implement serialization and deserialization for a given format. Required at runtime.");
+        DisplayHint("Hint: use the --dependency-type argument to filter the dependencies by type.",
+                    $"Example: kiota info -l {generationLanguage} --dependency-type serialization");
     }
     protected void DisplayInstallHint(LanguageInformation languageInformation, List<LanguageDependency> languageDependencies)
     {
