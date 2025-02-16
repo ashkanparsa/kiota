@@ -11,7 +11,7 @@ namespace Kiota.Builder.Refiners;
 public class SwiftRefiner : CommonLanguageRefiner
 {
     public SwiftRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
@@ -41,10 +41,10 @@ public class SwiftRefiner : CommonLanguageRefiner
                 true,
                 false,
                 true);
+            RemoveUntypedNodeTypeValues(generatedCode);
             AddDefaultImports(
                 generatedCode,
                 defaultUsingEvaluators);
-            RemoveUntypedNodePropertyValues(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             CorrectCoreType(
                 generatedCode,

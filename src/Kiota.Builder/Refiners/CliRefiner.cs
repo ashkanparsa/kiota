@@ -15,7 +15,7 @@ public class CliRefiner : CSharpRefiner, ILanguageRefiner
     private static readonly CodeParameterKind[] UnusedParamKinds = new[] { CodeParameterKind.RequestAdapter };
     private static readonly CodeMethodKind[] ConstructorKinds = new[] { CodeMethodKind.Constructor, CodeMethodKind.ClientConstructor, CodeMethodKind.RawUrlConstructor };
     public CliRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
@@ -327,10 +327,10 @@ public class CliRefiner : CSharpRefiner, ILanguageRefiner
             {
                 Name = "Tuple",
                 IsExternal = true,
-                GenericTypeParameterValues = new() {
+                GenericTypeParameterValues = [
                     CreateCommandType(collectionKind),
                     CreateCommandType(collectionKind),
-                }
+                ]
             },
             SimpleName = indexer.Name.CleanupSymbolName()
         };
@@ -404,15 +404,17 @@ public class CliRefiner : CSharpRefiner, ILanguageRefiner
     }
 
     private static readonly AdditionalUsingEvaluator[] additionalUsingEvaluators =
-    {
-        new(x => x is CodeClass { Kind: CodeClassKind.RequestBuilder },
+    [
+        new(static x => x is CodeClass { Kind: CodeClassKind.RequestBuilder },
             "System.CommandLine", "Command", "RootCommand", "IConsole"),
-        new(x => x is CodeClass { Kind: CodeClassKind.RequestBuilder },
+        new(static x => x is CodeClass { Kind: CodeClassKind.RequestBuilder },
             "Microsoft.Kiota.Cli.Commons.IO", "IOutputFormatter", "IOutputFormatterFactory", "FormatterType",
             "PageLinkData", "IPagingService"),
-        new(x => x is CodeClass { Kind: CodeClassKind.RequestBuilder },
+        new(static x => x is CodeClass { Kind: CodeClassKind.RequestBuilder },
             "System.Text", "Encoding"),
-        new(x => x is CodeMethod { Kind: CodeMethodKind.RequestExecutor or CodeMethodKind.RequestGenerator },
-            "Microsoft.Kiota.Cli.Commons.Extensions", "GetRequestAdapter")
-    };
+        new(static x => x is CodeClass { Kind: CodeClassKind.RequestBuilder },
+            "System.Linq", "Enumerable"),
+        new(static x => x is CodeMethod { Kind: CodeMethodKind.RequestExecutor or CodeMethodKind.RequestGenerator },
+            "Microsoft.Kiota.Cli.Commons.Extensions", "GetRequestAdapter"),
+    ];
 }

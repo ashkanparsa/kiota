@@ -2,10 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { QuickPickItem } from "vscode";
+
+import { displayMigrationMessages, migrateFromLockFile } from './commands/migrate/migrateFromLockFile';
 import { APIMANIFEST, CLIENT, CLIENTS, KIOTA_DIRECTORY, KIOTA_WORKSPACE_FILE, PLUGIN, PLUGINS } from './constants';
-import { GenerationType, KiotaGenerationLanguage, KiotaPluginType } from './enums';
 import { allGenerationLanguages } from './kiotaInterop';
-import { displayMigrationMessages, migrateFromLockFile } from './migrateFromLockFile';
+import { GenerationType, KiotaGenerationLanguage, KiotaPluginType } from './types/enums';
 
 const clientTypes = [CLIENT, CLIENTS];
 const pluginTypes = [PLUGIN, PLUGINS, APIMANIFEST];
@@ -137,6 +138,8 @@ export function parseGenerationLanguage(value: string): KiotaGenerationLanguage 
           return KiotaGenerationLanguage.Ruby;
       case "cli":
           return KiotaGenerationLanguage.CLI;
+      case "dart":
+          return KiotaGenerationLanguage.Dart;
       default:
           throw new Error("unknown language " + value);
     }
@@ -162,65 +165,13 @@ export function allGenerationLanguagesToString(): string[] {
   return allSupportedLanguages;
 }
 
-export function validateDeepLinkQueryParams(queryParameters: Record<string, string>):
- [Record<string, string|undefined>, string[]]
-{
-  let errormsg: string [] = [];
-  let validQueryParams: Record<string, string|undefined> = {};
-  const descriptionUrl = queryParameters["descriptionurl"];
-  const name = getSanitizedString(queryParameters["name"]);
-  const source = getSanitizedString(queryParameters["source"]);
-  let lowercasedKind: string = queryParameters["kind"]?.toLowerCase();
-  let validKind: string | undefined = ["plugin", "client"].indexOf(lowercasedKind) > -1 ? lowercasedKind : undefined ;
-  if (!validKind){
-    errormsg.push(
-      "Invalid parameter 'kind' deeplinked. Actual value: " + lowercasedKind + 
-      "Expected values: 'plugin' or 'client'"
-    );
+export function isValidUrl(url: string): boolean {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
   }
-  let givenLanguage: string | undefined = undefined;
-  try{
-    if (queryParameters["language"]){
-      let languageEnumerator = parseGenerationLanguage(queryParameters["language"]);
-      givenLanguage = KiotaGenerationLanguage[languageEnumerator];
-    }
-  }catch (e){
-    if (e instanceof Error) {
-        errormsg.push(e.message);
-    } else {
-        errormsg.push(String(e));
-    }
-
-  }
-  if (!givenLanguage && validKind === "client"){
-    let acceptedLanguages: string [] = allGenerationLanguagesToString();
-    errormsg.push("Invalid 'language'= " + queryParameters["language"] + " parameter deeplinked. Supported languages are : " + acceptedLanguages.join(","));
-  }
-  let providedType: string | undefined =  undefined;
-  try{
-    if (queryParameters["type"]){
-      let pluginTypeEnumerator : KiotaPluginType = parsePluginType([queryParameters["type"]])[0];
-      providedType = KiotaPluginType[pluginTypeEnumerator]?.toLowerCase();
-    }
-  }catch(e){
-    if (e instanceof Error) {
-        errormsg.push(e.message);
-    } else {
-        errormsg.push(String(e));
-    }
-  }
-  if (!providedType && validKind === "plugin"){
-    let acceptedPluginTypes: string [] = Object.keys(KiotaPluginType).filter(x => !Number(x) && x !=='0').map(x => x.toString().toLowerCase());
-    errormsg.push("Invalid parameter 'type' deeplinked. Expected values: " + acceptedPluginTypes.join(","));
-  }
-
-  validQueryParams = {
-    descriptionUrl: descriptionUrl,
-    name: name,
-    kind: validKind,
-    type: providedType,
-    language: givenLanguage,
-    source: source,
-  };
-  return [validQueryParams, errormsg];
 }
+
+

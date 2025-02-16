@@ -13,4 +13,6 @@ export const CLIENT = "client";
 export const PLUGIN = "plugin";
 export const APIMANIFEST = "apimanifest";
 export const REMIND_ME_LATER_FLAG = 'remindMeLater';
-
+export const API_MANIFEST_FILE = "apimanifest.json";
+export const MANIFEST_KIOTA_VERSION_KEY = "x-ms-kiota-version";
+export const SHOW_MESSAGE_AFTER_API_LOAD = "show-message-after-api-load";
