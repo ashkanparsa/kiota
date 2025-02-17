@@ -12,7 +12,7 @@ using Kiota.Builder.Writers.Java;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Java;
-public class CodeMethodWriterTests : IDisposable
+public sealed class CodeMethodWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -604,7 +604,8 @@ public class CodeMethodWriterTests : IDisposable
         };
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("CompletableFuture<Void>", result);
+        Assert.Contains("void", result);
+        Assert.DoesNotContain("@jakarta.annotation", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -652,7 +653,10 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("put(\"4XX\", Error4XX::createFromDiscriminatorValue);", result);
         Assert.Contains("put(\"5XX\", Error5XX::createFromDiscriminatorValue);", result);
         Assert.Contains("put(\"401\", Error401::createFromDiscriminatorValue);", result);
-        Assert.Contains("sendAsync", result);
+        Assert.Contains("send", result);
+        Assert.Contains("@return", result);
+        Assert.Contains("@link", result);
+        Assert.Contains("@throws", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1174,7 +1178,7 @@ public class CodeMethodWriterTests : IDisposable
         AddRequestBodyParameters();
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("sendCollectionAsync", result);
+        Assert.Contains("sendCollection", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1188,17 +1192,11 @@ public class CodeMethodWriterTests : IDisposable
         method.AcceptedResponseTypes.Add("application/json");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("final RequestInformation requestInfo = new RequestInformation()", result);
-        Assert.Contains("urlTemplate =", result);
-        Assert.Contains("pathParameters =", result);
-        Assert.Contains("httpMethod = HttpMethod.GET", result);
+        Assert.Contains("final RequestInformation requestInfo = new RequestInformation(HttpMethod.GET, urlTemplate, pathParameters)", result);
         Assert.Contains("requestInfo.headers.tryAdd(\"Accept\", \"application/json\")", result);
-        Assert.Contains("if (c != null)", result);
-        Assert.Contains("final RequestConfig requestConfig = new RequestConfig()", result);
-        Assert.Contains("c.accept(requestConfig)", result);
-        Assert.Contains("addQueryParameters", result);
-        Assert.Contains("headers.putAll", result);
-        Assert.Contains("addRequestOptions", result);
+        Assert.Contains("configure(c", result);
+        Assert.Contains("::new", result);
+        Assert.Contains("x -> x.q", result);
         Assert.Contains("setContentFromScalar", result);
         Assert.Contains("return requestInfo;", result);
         AssertExtensions.CurlyBracesAreClosed(result);
@@ -1216,17 +1214,11 @@ public class CodeMethodWriterTests : IDisposable
         bodyParameter.Type.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Complex;
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("final RequestInformation requestInfo = new RequestInformation()", result);
-        Assert.Contains("urlTemplate =", result);
-        Assert.Contains("pathParameters =", result);
-        Assert.Contains("httpMethod = HttpMethod.GET", result);
+        Assert.Contains("final RequestInformation requestInfo = new RequestInformation(HttpMethod.GET, urlTemplate, pathParameters)", result);
         Assert.Contains("requestInfo.headers.tryAdd(\"Accept\", \"application/json\")", result);
-        Assert.Contains("if (c != null)", result);
-        Assert.Contains("final RequestConfig requestConfig = new RequestConfig()", result);
-        Assert.Contains("c.accept(requestConfig)", result);
-        Assert.Contains("addQueryParameters", result);
-        Assert.Contains("headers.putAll", result);
-        Assert.Contains("addRequestOptions", result);
+        Assert.Contains("configure(c", result);
+        Assert.Contains("::new", result);
+        Assert.Contains("x -> x.q", result);
         Assert.Contains("setContentFromScalarCollection", result);
         Assert.Contains("toArray", result);
         Assert.Contains("return requestInfo;", result);
@@ -1243,19 +1235,28 @@ public class CodeMethodWriterTests : IDisposable
         method.AcceptedResponseTypes.Add("application/json");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("final RequestInformation requestInfo = new RequestInformation()", result);
-        Assert.Contains("urlTemplate =", result);
-        Assert.Contains("pathParameters =", result);
-        Assert.Contains("httpMethod = HttpMethod.GET", result);
+        Assert.Contains("final RequestInformation requestInfo = new RequestInformation(HttpMethod.GET, urlTemplate, pathParameters)", result);
         Assert.Contains("requestInfo.headers.tryAdd(\"Accept\", \"application/json\")", result);
-        Assert.Contains("if (c != null)", result);
-        Assert.Contains("final RequestConfig requestConfig = new RequestConfig()", result);
-        Assert.Contains("c.accept(requestConfig)", result);
-        Assert.Contains("addQueryParameters", result);
-        Assert.Contains("headers.putAll", result);
-        Assert.Contains("addRequestOptions", result);
+        Assert.Contains("configure(c", result);
+        Assert.Contains("::new", result);
+        Assert.Contains("x -> x.q", result);
         Assert.Contains("setContentFromParsable", result);
         Assert.Contains("return requestInfo;", result);
+        AssertExtensions.CurlyBracesAreClosed(result);
+    }
+    [Fact]
+    public void WritesRequestGeneratorBodyWhenUrlTemplateIsOverrode()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        AddRequestBodyParameters(true);
+        method.AcceptedResponseTypes.Add("application/json");
+        method.UrlTemplateOverride = "{baseurl+}/foo/bar";
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("final RequestInformation requestInfo = new RequestInformation(HttpMethod.GET, \"{baseurl+}/foo/bar\", pathParameters)", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1268,13 +1269,10 @@ public class CodeMethodWriterTests : IDisposable
         AddRequestBodyParameters();
         writer.Write(method);
         var result = tw.ToString();
-        Assert.DoesNotContain("final RequestInformation requestInfo = new RequestInformation()", result);
-        Assert.DoesNotContain("httpMethod = HttpMethod.GET", result);
-        Assert.DoesNotContain("final RequestConfig requestConfig = new RequestConfig()", result);
-        Assert.DoesNotContain("c.accept(requestConfig)", result);
-        Assert.DoesNotContain("addQueryParameters", result);
-        Assert.DoesNotContain("headers.putAll", result);
-        Assert.DoesNotContain("addRequestOptions", result);
+        Assert.DoesNotContain("final RequestInformation requestInfo = new RequestInformation(HttpMethod.GET, urlTemplate, pathParameters)", result);
+        Assert.DoesNotContain("configure(c", result);
+        Assert.DoesNotContain("::new", result);
+        Assert.DoesNotContain("x -> x.q", result);
         Assert.DoesNotContain("return requestInfo;", result);
         Assert.Contains("return methodName(b, c)", result);
         AssertExtensions.CurlyBracesAreClosed(result);
@@ -1502,50 +1500,21 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("writeCollectionOfPrimitiveValues", result);
         Assert.Contains("writeCollectionOfObjectValues", result);
         Assert.Contains("writeEnumValue", result);
-        Assert.Contains("writeAdditionalData(this.getAdditionalData());", result);
         Assert.DoesNotContain("definedInParent", result, StringComparison.OrdinalIgnoreCase);
-        AssertExtensions.CurlyBracesAreClosed(result);
-    }
-    [Fact]
-    public void WritesMethodAsyncDescription()
-    {
-        setup();
-        method.Documentation.Description = MethodDescription;
-        var parameter = new CodeParameter
-        {
-            Documentation = new()
-            {
-                Description = ParamDescription,
-            },
-            Name = ParamName,
-            Type = new CodeType
-            {
-                Name = "String"
-            }
-        };
-        method.AddParameter(parameter);
-        writer.Write(method);
-        var result = tw.ToString();
-        Assert.Contains("/**", result);
-        Assert.Contains(MethodDescription, result);
-        Assert.Contains("@param ", result);
-        Assert.Contains(ParamName, result);
-        Assert.Contains(ParamDescription, result);
-        Assert.Contains("@return a CompletableFuture of", result);
-        Assert.Contains("*/", result);
+        Assert.Contains("writeAdditionalData(this.getAdditionalData());", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
     public void WritesMethodSyncDescription()
     {
         setup();
-        method.Documentation.Description = MethodDescription;
+        method.Documentation.DescriptionTemplate = MethodDescription;
         method.IsAsync = false;
         var parameter = new CodeParameter
         {
             Documentation = new()
             {
-                Description = ParamDescription,
+                DescriptionTemplate = ParamDescription,
             },
             Name = ParamName,
             Type = new CodeType
@@ -1563,7 +1532,7 @@ public class CodeMethodWriterTests : IDisposable
     public void WritesMethodDescriptionLink()
     {
         setup();
-        method.Documentation.Description = MethodDescription;
+        method.Documentation.DescriptionTemplate = MethodDescription;
         method.Documentation.DocumentationLabel = "see more";
         method.Documentation.DocumentationLink = new("https://foo.org/docs");
         method.IsAsync = false;
@@ -1571,7 +1540,7 @@ public class CodeMethodWriterTests : IDisposable
         {
             Documentation = new()
             {
-                Description = ParamDescription,
+                DescriptionTemplate = ParamDescription,
             },
             Name = ParamName,
             Type = new CodeType
@@ -1604,24 +1573,13 @@ public class CodeMethodWriterTests : IDisposable
         method.Parent = CodeNamespace.InitRootNamespace();
         Assert.Throws<InvalidOperationException>(() => writer.Write(method));
     }
-    private const string TaskPrefix = "CompletableFuture<";
     [Fact]
     public void WritesReturnType()
     {
         setup();
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"{TaskPrefix}{ReturnTypeName}> {MethodName}", result);// async default
-        AssertExtensions.CurlyBracesAreClosed(result);
-    }
-    [Fact]
-    public void DoesNotAddAsyncInformationOnSyncMethods()
-    {
-        setup();
-        method.IsAsync = false;
-        writer.Write(method);
-        var result = tw.ToString();
-        Assert.DoesNotContain(TaskPrefix, result);
+        Assert.Contains($"{ReturnTypeName} {MethodName}", result);// async default
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1715,7 +1673,7 @@ public class CodeMethodWriterTests : IDisposable
         method.Kind = CodeMethodKind.Getter;
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("this.getBackingStore().get(\"someProperty\")", result);
+        Assert.Contains("this.backingStore.get(\"someProperty\")", result);
     }
     [Fact]
     public void WritesGetterToBackingStoreWithNonnullProperty()
@@ -1745,7 +1703,7 @@ public class CodeMethodWriterTests : IDisposable
         method.Kind = CodeMethodKind.Setter;
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains("this.getBackingStore().set(\"someProperty\", value)", result);
+        Assert.Contains("this.backingStore.set(\"someProperty\", value)", result);
     }
     [Fact]
     public void WritesGetterToField()
@@ -1829,6 +1787,32 @@ public class CodeMethodWriterTests : IDisposable
                 Name = "String"
             }
         });
+        var defaultValueNull = "\"null\"";
+        var nullPropName = "propWithDefaultNullValue";
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = nullPropName,
+            DefaultValue = defaultValueNull,
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType
+            {
+                Name = "int",
+                IsNullable = true
+            }
+        });
+        var defaultValueBool = "\"true\"";
+        var boolPropName = "propWithDefaultBoolValue";
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = boolPropName,
+            DefaultValue = defaultValueBool,
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType
+            {
+                Name = "boolean",
+                IsNullable = true
+            }
+        });
         AddRequestProperties();
         method.AddParameter(new CodeParameter
         {
@@ -1843,6 +1827,8 @@ public class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains(parentClass.Name, result);
         Assert.Contains($"this.set{propName.ToFirstCharacterUpperCase()}({defaultValue})", result);
+        Assert.Contains($"this.set{nullPropName.ToFirstCharacterUpperCase()}({defaultValueNull.TrimQuotes()})", result);
+        Assert.Contains($"this.set{boolPropName.ToFirstCharacterUpperCase()}({defaultValueBool.TrimQuotes()})", result);
         Assert.Contains("super", result);
     }
     [Fact]
@@ -2024,7 +2010,29 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("enableBackingStore", result);
     }
     [Fact]
-    public async Task AccessorsTargetingEscapedPropertiesAreNotEscapedThemselves()
+    public void WritesQueryParametersExtractor()
+    {
+        setup();
+        method.Kind = CodeMethodKind.QueryParametersMapper;
+        var defaultValue = "\"someVal\"";
+        var propName = "propWithDefaultValue";
+        parentClass.Kind = CodeClassKind.QueryParameters;
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = propName,
+            DefaultValue = defaultValue,
+            Kind = CodePropertyKind.QueryParameter,
+            Type = new CodeType
+            {
+                Name = "String"
+            }
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("allQueryParams.put(\"propWithDefaultValue\", propWithDefaultValue);", result);
+    }
+    [Fact]
+    public async Task AccessorsTargetingEscapedPropertiesAreNotEscapedThemselvesAsync()
     {
         setup();
         var model = root.AddClass(new CodeClass
@@ -2039,7 +2047,7 @@ public class CodeMethodWriterTests : IDisposable
             Access = AccessModifier.Public,
             Kind = CodePropertyKind.Custom,
         });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.Java }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Java }, root);
         var getter = model.Methods.First(x => x.IsOfKind(CodeMethodKind.Getter));
         var setter = model.Methods.First(x => x.IsOfKind(CodeMethodKind.Setter));
         var tempWriter = LanguageWriter.GetLanguageWriter(GenerationLanguage.Java, DefaultPath, DefaultName);
@@ -2088,6 +2096,17 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("2021-01-01", result);
         Assert.Contains("v2.0", result);
         Assert.Contains("@Deprecated", result);
+    }
+    [Fact]
+    public void WritesDeprecationInformationFromBuilder()
+    {
+        setup();
+        var newMethod = method.Clone() as CodeMethod;
+        newMethod.Name = "NewAwesomeMethod";// new method replacement
+        method.Deprecation = new("This method is obsolete. Use NewAwesomeMethod instead.", IsDeprecated: true, TypeReferences: new() { { "TypeName", new CodeType { TypeDefinition = newMethod, IsExternal = false } } });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("This method is obsolete. Use NewAwesomeMethod instead.", result);
     }
     [Fact]
     public void WritesMessageOverrideOnPrimary()
@@ -2140,5 +2159,32 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("@Override", result);
         Assert.Contains("String getErrorMessage() ", result);
         Assert.Contains("return this.getProp1()", result);
+    }
+
+    [Fact]
+    public void WritesRequestGeneratorAcceptHeaderQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        method.AcceptedResponseTypes.Add("application/json; profile=\"CamelCase\"");
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("requestInfo.headers.tryAdd(\"Accept\", \"application/json; profile=\\\"CamelCase\\\"\");", result);
+    }
+
+    [Fact]
+    public void WritesRequestGeneratorContentTypeQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        AddRequestProperties();
+        AddRequestBodyParameters();
+        method.RequestBodyContentType = "application/json; profile=\"CamelCase\"";
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("\"application/json; profile=\\\"CamelCase\\\"\"", result);
     }
 }

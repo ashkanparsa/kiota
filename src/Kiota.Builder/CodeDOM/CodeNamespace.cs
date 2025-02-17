@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -36,7 +35,8 @@ public class CodeNamespace : CodeBlock<BlockDeclaration, BlockEnd>
         var file = FindChildByName<CodeFile>(fileName, false) ?? new CodeFile { Name = fileName };
         RemoveChildElement(children);
         RemoveChildElementByName(fileName);
-        file.AddElements(children);
+        if (children is { Length: > 0 })
+            file.AddElements(children);
 
         if (!file.IsChildOf(this, true))
             AddRange(file);
@@ -53,9 +53,9 @@ public class CodeNamespace : CodeBlock<BlockDeclaration, BlockEnd>
     }
     public IEnumerable<CodeClass> AddClass(params CodeClass[] codeClasses)
     {
-        if (codeClasses == null || codeClasses.Any(x => x == null))
+        if (codeClasses == null || Array.Exists(codeClasses, static x => x == null))
             throw new ArgumentNullException(nameof(codeClasses));
-        if (!codeClasses.Any())
+        if (codeClasses.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(codeClasses));
         return AddRange(codeClasses);
     }
@@ -70,12 +70,13 @@ public class CodeNamespace : CodeBlock<BlockDeclaration, BlockEnd>
     public IEnumerable<CodeEnum> Enums => InnerChildElements.Values.OfType<CodeEnum>();
     public IEnumerable<CodeFunction> Functions => InnerChildElements.Values.OfType<CodeFunction>();
     public IEnumerable<CodeInterface> Interfaces => InnerChildElements.Values.OfType<CodeInterface>();
+    public IEnumerable<CodeConstant> Constants => InnerChildElements.Values.OfType<CodeConstant>();
     public IEnumerable<CodeFile> Files => InnerChildElements.Values.OfType<CodeFile>();
-    public CodeNamespace? FindNamespaceByName(string nsName)
+    public CodeNamespace? FindNamespaceByName(string nsName, bool findInChildElements = false)
     {
         ArgumentException.ThrowIfNullOrEmpty(nsName);
         if (nsName.Equals(Name, StringComparison.OrdinalIgnoreCase)) return this;
-        var result = FindChildByName<CodeNamespace>(nsName, false);
+        var result = FindChildByName<CodeNamespace>(nsName, findInChildElements);
         if (result == null)
             foreach (var childNS in InnerChildElements.Values.OfType<CodeNamespace>())
             {
@@ -132,9 +133,9 @@ public class CodeNamespace : CodeBlock<BlockDeclaration, BlockEnd>
     }
     public IEnumerable<CodeEnum> AddEnum(params CodeEnum[] enumDeclarations)
     {
-        if (enumDeclarations == null || enumDeclarations.Any(x => x == null))
+        if (enumDeclarations == null || Array.Exists(enumDeclarations, static x => x == null))
             throw new ArgumentNullException(nameof(enumDeclarations));
-        if (!enumDeclarations.Any())
+        if (enumDeclarations.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(enumDeclarations));
         return AddRange(enumDeclarations);
     }
@@ -149,17 +150,17 @@ public class CodeNamespace : CodeBlock<BlockDeclaration, BlockEnd>
 
     public IEnumerable<CodeFunction> AddFunction(params CodeFunction[] globalFunctions)
     {
-        if (globalFunctions == null || globalFunctions.Any(x => x == null))
+        if (globalFunctions == null || Array.Exists(globalFunctions, static x => x == null))
             throw new ArgumentNullException(nameof(globalFunctions));
-        if (!globalFunctions.Any())
+        if (globalFunctions.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(globalFunctions));
         return AddRange(globalFunctions);
     }
     public IEnumerable<CodeInterface> AddInterface(params CodeInterface[] interfaces)
     {
-        if (interfaces == null || interfaces.Any(x => x == null))
+        if (interfaces == null || Array.Exists(interfaces, static x => x == null))
             throw new ArgumentNullException(nameof(interfaces));
-        if (!interfaces.Any())
+        if (interfaces.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(interfaces));
         return AddRange(interfaces);
     }
@@ -180,7 +181,7 @@ public class CodeNamespace : CodeBlock<BlockDeclaration, BlockEnd>
         var deeperMostSegmentIndex = 0;
         while (deeperMostSegmentIndex < Math.Min(importNamespaceSegmentsCount, currentNamespaceSegmentsCount))
         {
-            if (currentNamespaceSegments.ElementAt(deeperMostSegmentIndex).Equals(importNamespaceSegments.ElementAt(deeperMostSegmentIndex), StringComparison.OrdinalIgnoreCase))
+            if (currentNamespaceSegments[deeperMostSegmentIndex].Equals(importNamespaceSegments[deeperMostSegmentIndex], StringComparison.OrdinalIgnoreCase))
                 deeperMostSegmentIndex++;
             else
                 break;
@@ -191,5 +192,13 @@ public class CodeNamespace : CodeBlock<BlockDeclaration, BlockEnd>
             UpwardsMovesCount = upMoves,
             DownwardsSegments = importNamespaceSegments.Skip(deeperMostSegmentIndex)
         };
+    }
+    internal IEnumerable<CodeConstant> AddConstant(params CodeConstant[] codeConstants)
+    {
+        if (codeConstants == null || Array.Exists(codeConstants, static x => x == null))
+            throw new ArgumentNullException(nameof(codeConstants));
+        if (codeConstants.Length == 0)
+            throw new ArgumentOutOfRangeException(nameof(codeConstants));
+        return AddRange(codeConstants);
     }
 }

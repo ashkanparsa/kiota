@@ -32,7 +32,7 @@ public class CodePropertyWriterTests
             Name = "ParentClass",
             Documentation = new()
             {
-                Description = "This is an amazing class",
+                DescriptionTemplate = "This is an amazing class",
             },
             Kind = CodeClassKind.Model
         };
@@ -68,7 +68,7 @@ public class CodePropertyWriterTests
             Access = AccessModifier.Public,
             Documentation = new()
             {
-                Description = "I can get your messages.",
+                DescriptionTemplate = "I can get your messages.",
             },
             Type = new CodeType
             {
@@ -85,13 +85,13 @@ public class CodePropertyWriterTests
     }
 
     [Fact]
-    public async Task WriteCollectionKindProperty()
+    public async Task WriteCollectionKindPropertyAsync()
     {
         var property = new CodeProperty
         {
             Documentation = new()
             {
-                Description = "Additional data dictionary",
+                DescriptionTemplate = "Additional data dictionary",
             },
             Name = "additionalData",
             Kind = CodePropertyKind.AdditionalData,
@@ -100,7 +100,7 @@ public class CodePropertyWriterTests
         };
         parentClass.Kind = CodeClassKind.Model;
         parentClass.AddProperty(property);
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
         propertyWriter.WriteCodeElement(property, languageWriter);
         var result = stringWriter.ToString();
         Assert.Contains("private ?array $additionalData = null;", result);
@@ -225,7 +225,7 @@ public class CodePropertyWriterTests
     }
 
     [Fact]
-    public async void WriteRequestOption()
+    public async Task WriteRequestOptionAsync()
     {
         var options = new CodeProperty
         {
@@ -239,11 +239,33 @@ public class CodePropertyWriterTests
             }
         };
         parentClass.AddProperty(options);
-        await phpRefiner.Refine(root, new CancellationToken());
+        await phpRefiner.RefineAsync(root, new CancellationToken());
         propertyWriter.WriteCodeElement(options, languageWriter);
         var result = stringWriter.ToString();
 
         Assert.Contains("@var array<RequestOption>|null $options", result);
         Assert.Contains("public ?array $options = null;", result);
+    }
+
+    [Fact]
+    public void WritePropertyWithDescription()
+    {
+        CodeProperty property = new CodeProperty
+        {
+            Name = "name",
+            Documentation = new()
+            {
+                DescriptionTemplate = "The name pattern that branches must match in order to deploy to the environment.Wildcard characters will not match `/`. For example, to match branches that begin with `release/` and contain an additional single slash, use `release/*/*`.For more information about pattern matching syntax, see the [Ruby File.fnmatch documentation](https://ruby-doc.org/core-2.5.1/File.html#method-c-fnmatch).",
+            },
+            Type = new CodeType
+            {
+                Name = "string"
+            },
+            Access = AccessModifier.Private
+        };
+        parentClass.AddProperty(property);
+        propertyWriter.WriteCodeElement(property, languageWriter);
+        var result = stringWriter.ToString();
+        Assert.DoesNotContain("/*/*", result);
     }
 }

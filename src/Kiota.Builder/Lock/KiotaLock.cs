@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Configuration;
 
 namespace Kiota.Builder.Lock;
@@ -31,6 +32,10 @@ public class KiotaLock
     /// </summary>
     public string ClientClassName { get; set; } = string.Empty;
     /// <summary>
+    /// The type access modifier to use for the client types.
+    /// </summary>
+    public string TypeAccessModifier { get; set; } = "Public";
+    /// <summary>
     /// The main namespace for this client.
     /// </summary>
     public string ClientNamespaceName { get; set; } = string.Empty;
@@ -59,15 +64,22 @@ public class KiotaLock
     {
         get; set;
     }
+    /// <summary>
+    /// Whether SSL Validation was disabled for this client.
+    /// </summary>
+    public bool DisableSSLValidation
+    {
+        get; set;
+    }
 #pragma warning disable CA2227
     /// <summary>
     /// The serializers used for this client.
     /// </summary>
-    public HashSet<string> Serializers { get; set; } = new();
+    public HashSet<string> Serializers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// The deserializers used for this client.
     /// </summary>
-    public HashSet<string> Deserializers { get; set; } = new();
+    public HashSet<string> Deserializers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// The structured mime types used for this client.
     /// </summary>
@@ -77,15 +89,15 @@ public class KiotaLock
     /// <summary>
     /// The path patterns for API endpoints to include for this client.
     /// </summary>
-    public HashSet<string> IncludePatterns { get; set; } = new();
+    public HashSet<string> IncludePatterns { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// The path patterns for API endpoints to exclude for this client.
     /// </summary>
-    public HashSet<string> ExcludePatterns { get; set; } = new();
+    public HashSet<string> ExcludePatterns { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// The OpenAPI validation rules to disable during the generation.
     /// </summary>
-    public HashSet<string> DisabledValidationRules { get; set; } = new();
+    public HashSet<string> DisabledValidationRules { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 #pragma warning restore CA2227
     /// <summary>
     /// Updates the passed configuration with the values from the lock file.
@@ -95,19 +107,22 @@ public class KiotaLock
     {
         ArgumentNullException.ThrowIfNull(config);
         config.ClientClassName = ClientClassName;
-        config.ClientNamespaceName = ClientNamespaceName;
         if (Enum.TryParse<GenerationLanguage>(Language, out var parsedLanguage))
             config.Language = parsedLanguage;
+        config.ClientNamespaceName = ClientNamespaceName;
+        if (Enum.TryParse<AccessModifier>(TypeAccessModifier, out var parsedAccessModifier))
+            config.TypeAccessModifier = parsedAccessModifier;
         config.UsesBackingStore = UsesBackingStore;
         config.ExcludeBackwardCompatible = ExcludeBackwardCompatible;
         config.IncludeAdditionalData = IncludeAdditionalData;
-        config.Serializers = Serializers;
-        config.Deserializers = Deserializers;
+        config.Serializers = Serializers.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        config.Deserializers = Deserializers.ToHashSet(StringComparer.OrdinalIgnoreCase);
         config.StructuredMimeTypes = new(StructuredMimeTypes);
-        config.IncludePatterns = IncludePatterns;
-        config.ExcludePatterns = ExcludePatterns;
+        config.IncludePatterns = IncludePatterns.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        config.ExcludePatterns = ExcludePatterns.ToHashSet(StringComparer.OrdinalIgnoreCase);
         config.OpenAPIFilePath = DescriptionLocation;
-        config.DisabledValidationRules = DisabledValidationRules;
+        config.DisabledValidationRules = DisabledValidationRules.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        config.DisableSSLValidation = DisableSSLValidation;
     }
     /// <summary>
     /// Initializes a new instance of the <see cref="KiotaLock"/> class.
@@ -124,16 +139,18 @@ public class KiotaLock
         ArgumentNullException.ThrowIfNull(config);
         Language = config.Language.ToString();
         ClientClassName = config.ClientClassName;
+        TypeAccessModifier = config.TypeAccessModifier.ToString();
         ClientNamespaceName = config.ClientNamespaceName;
         UsesBackingStore = config.UsesBackingStore;
         ExcludeBackwardCompatible = config.ExcludeBackwardCompatible;
         IncludeAdditionalData = config.IncludeAdditionalData;
-        Serializers = config.Serializers;
-        Deserializers = config.Deserializers;
+        Serializers = config.Serializers.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Deserializers = config.Deserializers.ToHashSet(StringComparer.OrdinalIgnoreCase);
         StructuredMimeTypes = config.StructuredMimeTypes.ToList();
-        IncludePatterns = config.IncludePatterns;
-        ExcludePatterns = config.ExcludePatterns;
+        IncludePatterns = config.IncludePatterns.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        ExcludePatterns = config.ExcludePatterns.ToHashSet(StringComparer.OrdinalIgnoreCase);
         DescriptionLocation = config.OpenAPIFilePath;
-        DisabledValidationRules = config.DisabledValidationRules;
+        DisabledValidationRules = config.DisabledValidationRules.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        DisableSSLValidation = config.DisableSSLValidation;
     }
 }

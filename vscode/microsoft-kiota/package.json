@@ -3,13 +3,14 @@
   "displayName": "Microsoft Kiota",
   "publisher": "ms-graph",
   "description": "Client generator for HTTP REST APIs described by OpenAPI which helps eliminate the need to take a dependency on a different API client for every API that you need to call, as well as limiting the generation to the exact API surface area you're interested in, thanks to a filtering capability.",
-  "version": "1.7.100000001",
-  "kiotaVersion": "1.7.0",
-  "telemetryInstrumentationKey": "4c6357e0-daf9-42b5-bdfb-67878f8957b5",
+  "version": "1.21.100000001",
+  "kiotaVersion": "1.22.0",
+  "telemetryInstrumentationKey": "1b2ee3d8-9aae-4adc-8832-fcf257233e91",
   "icon": "images/logo.png",
   "engines": {
-    "vscode": "^1.84.0"
+    "vscode": "^1.96.0"
   },
+  "license": "MIT",
   "categories": [
     "Other"
   ],
@@ -17,6 +18,13 @@
     "url": "https://github.com/microsoft/kiota.git",
     "type": "git"
   },
+  "keywords": [
+    "openapi",
+    "api client",
+    "copilot",
+    "api plugins",
+    "api manifest"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -27,37 +35,37 @@
       "title": "Kiota",
       "properties": {
         "kiota.generate.includeAdditionalData.enabled": {
-          "type":"boolean",
+          "type": "boolean",
           "default": true,
           "description": "%kiota.generate.includeAdditionalData.description%"
         },
         "kiota.generate.backingStore.enabled": {
-          "type":"boolean",
+          "type": "boolean",
           "default": false,
           "description": "%kiota.generate.backingStore.description%"
         },
         "kiota.generate.excludeBackwardCompatible.enabled": {
-          "type":"boolean",
+          "type": "boolean",
           "default": false,
           "description": "%kiota.generate.excludeBackwardCompatible.description%"
         },
         "kiota.cleanOutput.enabled": {
-          "type":"boolean",
+          "type": "boolean",
           "default": false,
           "description": "%kiota.cleanOutput.description%"
         },
         "kiota.generate.disabledValidationRules": {
-          "type":"array",
+          "type": "array",
           "default": [],
           "description": "%kiota.generate.disabledValidationRules.description%"
         },
         "kiota.clearCache.enabled": {
-          "type":"boolean",
+          "type": "boolean",
           "default": false,
           "description": "%kiota.clearCache.description%"
         },
         "kiota.generate.serializer.CSharp": {
-          "type":"array",
+          "type": "array",
           "default": [
             "Microsoft.Kiota.Serialization.Json.JsonSerializationWriterFactory",
             "Microsoft.Kiota.Serialization.Text.TextSerializationWriterFactory",
@@ -67,7 +75,7 @@
           "description": "%kiota.generate.serializer.description%"
         },
         "kiota.generate.deserializer.CSharp": {
-          "type":"array",
+          "type": "array",
           "default": [
             "Microsoft.Kiota.Serialization.Json.JsonParseNodeFactory",
             "Microsoft.Kiota.Serialization.Text.TextParseNodeFactory",
@@ -75,8 +83,27 @@
           ],
           "description": "%kiota.generate.deserializer.description%"
         },
+        "kiota.generate.serializer.Dart": {
+          "type": "array",
+          "default": [
+            "microsoft_kiota_serialization_json/microsoft_kiota_serialization_json.JsonSerializationWriterFactory",
+            "microsoft_kiota_serialization_form/microsoft_kiota_serialization_form.FormSerializationWriterFactory",
+            "microsoft_kiota_serialization_text/microsoft_kiota_serialization_text.TextSerializationWriterFactory",
+            "microsoft_kiota_serialization_multipart/microsoft_kiota_serialization_multipart.MultipartSerializationWriterFactory"
+          ],
+          "description": "%kiota.generate.serializer.description%"
+        },
+        "kiota.generate.deserializer.Dart": {
+          "type": "array",
+          "default": [
+            "microsoft_kiota_serialization_json/microsoft_kiota_serialization_json.JsonParseNodeFactory",
+            "microsoft_kiota_serialization_text/microsoft_kiota_serialization_text.TextParseNodeFactory",
+            "microsoft_kiota_serialization_form/microsoft_kiota_serialization_form.FormParseNodeFactory"
+          ],
+          "description": "%kiota.generate.deserializer.description%"
+        },
         "kiota.generate.serializer.Go": {
-          "type":"array",
+          "type": "array",
           "default": [
             "github.com/microsoft/kiota-serialization-form-go/FormSerializationWriterFactory",
             "github.com/microsoft/kiota-serialization-json-go/JsonSerializationWriterFactory",
@@ -86,7 +113,7 @@
           "description": "%kiota.generate.serializer.description%"
         },
         "kiota.generate.deserializer.Go": {
-          "type":"array",
+          "type": "array",
           "default": [
             "github.com/microsoft/kiota-serialization-form-go/FormParseNodeFactory",
             "github.com/microsoft/kiota-serialization-json-go/JsonParseNodeFactory",
@@ -95,7 +122,7 @@
           "description": "%kiota.generate.deserializer.description%"
         },
         "kiota.generate.serializer.Java": {
-          "type":"array",
+          "type": "array",
           "default": [
             "com.microsoft.kiota.serialization.FormSerializationWriterFactory",
             "com.microsoft.kiota.serialization.JsonSerializationWriterFactory",
@@ -105,7 +132,7 @@
           "description": "%kiota.generate.serializer.description%"
         },
         "kiota.generate.deserializer.Java": {
-          "type":"array",
+          "type": "array",
           "default": [
             "com.microsoft.kiota.serialization.TextParseNodeFactory",
             "com.microsoft.kiota.serialization.JsonParseNodeFactory",
@@ -114,53 +141,59 @@
           "description": "%kiota.generate.deserializer.description%"
         },
         "kiota.generate.serializer.PHP": {
-          "type":"array",
+          "type": "array",
           "default": [
             "Microsoft\\Kiota\\Serialization\\Json\\JsonSerializationWriterFactory",
-            "Microsoft\\Kiota\\Serialization\\Text\\TextSerializationWriterFactory"
+            "Microsoft\\Kiota\\Serialization\\Text\\TextSerializationWriterFactory",
+            "Microsoft\\Kiota\\Serialization\\Form\\FormSerializationWriterFactory",
+            "Microsoft\\Kiota\\Serialization\\Multipart\\MultipartSerializationWriterFactory"
           ],
           "description": "%kiota.generate.serializer.description%"
         },
         "kiota.generate.deserializer.PHP": {
-          "type":"array",
+          "type": "array",
           "default": [
             "Microsoft\\Kiota\\Serialization\\Json\\JsonParseNodeFactory",
-            "Microsoft\\Kiota\\Serialization\\Text\\TextParseNodeFactory"
+            "Microsoft\\Kiota\\Serialization\\Text\\TextParseNodeFactory",
+            "Microsoft\\Kiota\\Serialization\\Form\\FormParseNodeFactory"
           ],
           "description": "%kiota.generate.deserializer.description%"
         },
         "kiota.generate.serializer.Python": {
-          "type":"array",
+          "type": "array",
           "default": [
             "kiota_serialization_json.json_serialization_writer_factory.JsonSerializationWriterFactory",
-            "kiota_serialization_text.text_serialization_writer_factory.TextSerializationWriterFactory"
+            "kiota_serialization_text.text_serialization_writer_factory.TextSerializationWriterFactory",
+            "kiota_serialization_form.form_serialization_writer_factory.FormSerializationWriterFactory",
+            "kiota_serialization_multipart.multipart_serialization_writer_factory.MultipartSerializationWriterFactory"
           ],
           "description": "%kiota.generate.serializer.description%"
         },
         "kiota.generate.deserializer.Python": {
-          "type":"array",
+          "type": "array",
           "default": [
             "kiota_serialization_json.json_parse_node_factory.JsonParseNodeFactory",
-            "kiota_serialization_text.text_parse_node_factory.TextParseNodeFactory"
+            "kiota_serialization_text.text_parse_node_factory.TextParseNodeFactory",
+            "kiota_serialization_form.form_parse_node_factory.FormParseNodeFactory"
           ],
           "description": "%kiota.generate.deserializer.description%"
         },
         "kiota.generate.serializer.Ruby": {
-          "type":"array",
+          "type": "array",
           "default": [
             "microsoft_kiota_serialization/json_serialization_writer_factory"
           ],
           "description": "%kiota.generate.serializer.description%"
         },
         "kiota.generate.deserializer.Ruby": {
-          "type":"array",
+          "type": "array",
           "default": [
             "microsoft_kiota_serialization/json_parse_node_factory"
           ],
           "description": "%kiota.generate.deserializer.description%"
         },
         "kiota.generate.serializer.TypeScript": {
-          "type":"array",
+          "type": "array",
           "default": [
             "@microsoft/kiota-serialization-form.FormSerializationWriterFactory",
             "@microsoft/kiota-serialization-json.JsonSerializationWriterFactory",
@@ -170,7 +203,7 @@
           "description": "%kiota.generate.serializer.description%"
         },
         "kiota.generate.deserializer.TypeScript": {
-          "type":"array",
+          "type": "array",
           "default": [
             "@microsoft/kiota-serialization-form.FormParseNodeFactory",
             "@microsoft/kiota-serialization-json.JsonParseNodeFactory",
@@ -179,7 +212,7 @@
           "description": "%kiota.generate.deserializer.description%"
         },
         "kiota.generate.structuredMimeTypes": {
-          "type":"array",
+          "type": "array",
           "default": [
             "application/json;q=1",
             "application/x-www-form-urlencoded;q=0.2",
@@ -190,12 +223,6 @@
         }
       }
     },
-    "viewsWelcome": [
-      {
-        "view": "kiota.openApiExplorer",
-        "contents": "%kiota.openApiExplorer.welcome%"
-      }
-    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -215,10 +242,14 @@
     "views": {
       "kiota-openapi-explorer": [
         {
+          "id": "kiota.workspace",
+          "name": "%kiota.workspace.name%",
+          "order": 1
+        },
+        {
           "id": "kiota.openApiExplorer",
           "name": "%kiota.openApiExplorer.name%",
-          "icon": "media/logo.svg",
-          "contextualTitle": "%kiota.openApiExplorer.contextualTitle%"
+          "order": 2
         }
       ],
       "kiota-dependencies-info": [
@@ -237,61 +268,76 @@
         {
           "command": "kiota.selectLock",
           "group": "2_kiota@1",
-          "when": "resourceLangId == json && resourceFilename =~ /kiota-lock\\.json$/"
+          "when": "resourceLangId == json && resourceFilename =~ /workspace\\.json$/"
+        },
+        {
+          "command": "kiota.migrateFromLockFile",
+          "when": "resourceExtname == .json && resourceFilename == kiota-lock.json",
+          "group": "navigation"
         }
       ],
       "view/title": [
         {
-          "command": "kiota.openApiExplorer.openDescription",
-          "when": "view == kiota.openApiExplorer",
-          "group": "navigation@2"
-        },
-        {
-          "command": "kiota.searchApiDescription",
+          "command": "kiota.openApiExplorer.searchOrOpenApiDescription",
           "when": "view == kiota.openApiExplorer",
           "group": "navigation@1"
         },
         {
           "command": "kiota.openApiExplorer.filterDescription",
           "when": "view == kiota.openApiExplorer",
-          "group": "navigation@3"
+          "group": "navigation@2"
         },
         {
           "command": "kiota.openApiExplorer.generateClient",
           "when": "view == kiota.openApiExplorer",
-          "group": "navigation@4"
+          "group": "navigation@3"
         },
         {
-          "command": "kiota.openApiExplorer.closeDescription",
+          "command": "kiota.openApiExplorer.regenerateButton",
           "when": "view == kiota.openApiExplorer",
-          "group": "navigation@5"
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
         {
+          "command": "kiota.openApiExplorer.closeDescription",
+          "when": "view == kiota.openApiExplorer && viewItem == apiTitle",
+          "group": "inline@6"
+        },
+        {
           "command": "kiota.openApiExplorer.openDocumentationPage",
-          "when": "view == kiota.openApiExplorer && (viewItem || false)",
+          "when": "view == kiota.openApiExplorer && (viewItem == documentationUrl)",
           "group": "inline@1"
         },
         {
           "command": "kiota.openApiExplorer.addToSelectedEndpoints",
-          "when": "view == kiota.openApiExplorer",
+          "when": "view == kiota.openApiExplorer && viewItem != apiTitle && viewItem != clientNameOrPluginName",
           "group": "inline@2"
         },
         {
           "command": "kiota.openApiExplorer.addAllToSelectedEndpoints",
-          "when": "view == kiota.openApiExplorer",
+          "when": "view == kiota.openApiExplorer && viewItem != clientNameOrPluginName",
           "group": "inline@4"
         },
         {
           "command": "kiota.openApiExplorer.removeFromSelectedEndpoints",
-          "when": "view == kiota.openApiExplorer",
+          "when": "view == kiota.openApiExplorer && viewItem != apiTitle && viewItem != clientNameOrPluginName",
           "group": "inline@3"
         },
         {
           "command": "kiota.openApiExplorer.removeAllFromSelectedEndpoints",
-          "when": "view == kiota.openApiExplorer",
+          "when": "view == kiota.openApiExplorer && viewItem != clientNameOrPluginName",
           "group": "inline@5"
+        },
+        {
+          "command": "kiota.workspace.selectItem",
+          "when": "viewItem == item",
+          "group": "inline@1"
+        },
+        {
+          "command": "kiota.workspace.deleteItem",
+          "when": "viewItem == item",
+          "group": "inline@2"
         }
       ],
       "commandPalette": [
@@ -319,19 +365,16 @@
           "command": "kiota.openApiExplorer.removeAllFromSelectedEndpoints",
           "when": "false"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "kiota.migrateFromLockFile",
+          "when": "resourceExtname == .json && resourceFilename == kiota-lock.json",
+          "group": "navigation"
+        }
       ]
     },
     "commands": [
-      {
-        "command": "kiota.openApiExplorer.pasteManifest",
-        "category": "Kiota",
-        "title": "%kiota.openApiExplorer.pasteManifest.title%"
-      },
-      {
-        "command": "kiota.openApiExplorer.openManifestPath",
-        "category": "Kiota",
-        "title": "%kiota.openApiExplorer.openManifestPath.title%"
-      },
       {
         "command": "kiota.selectLock",
         "category": "Kiota",
@@ -353,19 +396,22 @@
         "command": "kiota.openApiExplorer.generateClient",
         "category": "Kiota",
         "title": "%kiota.openApiExplorer.generateClient.title%",
-        "icon": "$(play)"
+        "enablement": "kiota.openApiExplorer.showIcons",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "kiota.openApiExplorer.regenerateButton",
+        "category": "Kiota",
+        "title": "%kiota.openApiExplorer.regenerateButton.title%",
+        "enablement": "kiota.openApiExplorer.showRegenerateIcon",
+        "icon": "$(debug-rerun)"
       },
       {
         "command": "kiota.openApiExplorer.filterDescription",
         "category": "Kiota",
         "title": "%kiota.openApiExplorer.filterDescription.title%",
+        "enablement": "kiota.openApiExplorer.showIcons",
         "icon": "$(filter)"
-      },
-      {
-        "command": "kiota.searchApiDescription",
-        "category": "Kiota",
-        "title": "%kiota.searchApiDescription.title%",
-        "icon": "$(search)"
       },
       {
         "command": "kiota.openApiExplorer.addToSelectedEndpoints",
@@ -401,13 +447,59 @@
         "command": "kiota.openApiExplorer.closeDescription",
         "category": "Kiota",
         "title": "%kiota.openApiExplorer.closeDescription.title%",
-        "icon": "$(close)"
+        "icon": "$(trash)"
       },
       {
-        "command": "kiota.openApiExplorer.openDescription",
+        "command": "kiota.openApiExplorer.searchOrOpenApiDescription",
         "category": "Kiota",
         "title": "%kiota.openApiExplorer.openDescription.title%",
-        "icon": "$(go-to-file)"
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "kiota.workspace.openWorkspaceFile",
+        "title": "%kiota.openApiExplorer.openFile.title%"
+      },
+      {
+        "command": "kiota.editPaths",
+        "title": "%kiota.openApiExplorer.editPaths.title%"
+      },
+      {
+        "command": "kiota.regenerate",
+        "title": "%kiota.openApiExplorer.regenerateButton.title%"
+      },
+      {
+        "command": "kiota.workspace.refresh",
+        "title": "%kiota.openApiExplorer.refresh.title%"
+      },
+      {
+        "command": "kiota.migrateFromLockFile",
+        "title": "%kiota.migrateClients.title%"
+      },
+      {
+        "command": "kiota.workspace.selectItem",
+        "title": "%kiota.openApiExplorer.editPaths.title%",
+        "category": "Kiota",
+        "icon": "$(bracket)"
+      },
+      {
+        "command": "kiota.workspace.deleteItem",
+        "title": "%kiota.openApiExplorer.removeFromSelectedEndpoints.title%",
+        "category": "Kiota",
+        "icon": "$(trash)"
+      }
+    ],
+    "languages": [
+      {
+        "id": "json",
+        "extensions": [
+          ".json"
+        ]
+      }
+    ],
+    "codeLensProviders": [
+      {
+        "language": "json",
+        "provideCodeLenses": true
       }
     ]
   },
@@ -418,55 +510,73 @@
     "package": "webpack --mode production --devtool hidden-source-map",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
-    "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "pretest": "npm run compile && npm run compile-tests && npm run lint",
+    "lint": "eslint",
+    "test": "vscode-test",
+    "test-with-coverage": "npm run pretest && vscode-test --coverage",
+    "test:unit": "jest --detectOpenHandles"
   },
   "devDependencies": {
-    "@types/adm-zip": "^0.5.4",
-    "@types/mocha": "^10.0.4",
-    "@types/node": "20.x",
-    "@types/vscode": "^1.84.1",
-    "@typescript-eslint/eslint-plugin": "^6.10.0",
-    "@typescript-eslint/parser": "^6.10.0",
-    "@vscode/test-electron": "^2.3.6",
-    "eslint": "^8.53.0",
-    "glob": "^10.3.10",
-    "mocha": "^10.1.0",
-    "ts-loader": "^9.5.0",
-    "typescript": "^5.2.2",
-    "webpack": "^5.89.0",
-    "webpack-cli": "^5.1.4"
+    "@stylistic/eslint-plugin-ts": "^3.0.1",
+    "@types/adm-zip": "^0.5.7",
+    "@types/chai": "^5.0.1",
+    "@types/follow-redirects": "^1.14.4",
+    "@types/jest": "^29.5.14",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/sinon": "^17.0.3",
+    "@types/vscode": "^1.96.0",
+    "@typescript-eslint/eslint-plugin": "^8.23.0",
+    "@typescript-eslint/parser": "^8.23.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "chai": "^5.1.2",
+    "eslint": "^9.19.0",
+    "glob": "^11.0.1",
+    "mocha": "^11.1.0",
+    "sinon": "^19.0.2",
+    "ts-jest": "^29.2.5",
+    "ts-loader": "^9.5.2",
+    "typemoq": "^2.1.0",
+    "typescript": "^5.7.3",
+    "webpack": "^5.97.1",
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "@vscode/extension-telemetry": "^0.9.0",
-    "@vscode/l10n": "^0.0.16",
-    "adm-zip": "^0.5.10",
-    "is-online": "^10.0.0",
+    "@vscode/extension-telemetry": "^0.9.8",
+    "@vscode/l10n": "^0.0.18",
+    "adm-zip": "^0.5.16",
+    "appdata-path": "^1.0.0",
+    "follow-redirects": "^1.15.9",
+    "is-online": "^11.0.0",
+    "jest": "^29.7.0",
     "original-fs": "^1.2.0",
-    "vscode-jsonrpc": "^8.2.0"
+    "vscode-jsonrpc": "^8.2.1"
   },
-  "preview": true,
   "runtimeDependencies": [
     {
       "platformId": "win-x64",
-      "sha256": "F56C6430DBBD480C33D0BC70FFCABFFA7E3384308B9EC12040D21A6E5B7E99A3"
+      "sha256": "EAB71122320CC135A18FA18E7D5079B65AD0BF2AE2355D29312841289453C443"
     },
     {
       "platformId": "win-x86",
-      "sha256": "63AEC3490E0C4DAB4EFC8F06C5BF157A21FB9B613AD13F1F337A2E9D872D0FD5"
+      "sha256": "20F56AD821023B8A396AC0ACC197AB4CD62511D635A4ED9B1969BD8CFF286F16"
     },
     {
       "platformId": "linux-x64",
-      "sha256": "E07A9D438E8CBC30C77F1FEB0943DEA1D28F53C3E31E941A3ED7B19F4013CF77"
+      "sha256": "730C0A5469D83DBC9CDC206C9A3837DBE5892A7A3F0F09AF5A1EAC4CED4B033E"
+    },
+    {
+      "platformId": "linux-arm64",
+      "sha256": "E26CE40838E9F5D87476D53893332CFA58E5E691622772569B7A526C292958D4"
     },
     {
       "platformId": "osx-x64",
-      "sha256": "EAF3BE094DA835BD45B5EA0F4C63E12733D973B5EFA31D25170B3866BEA6B6BD"
+      "sha256": "3446A580FFF5F8567E37E9E04D6E944A8B8E83F0B5584A5683527F501E6181FD"
     },
     {
       "platformId": "osx-arm64",
-      "sha256": "FC74F2A0E7338CD618F9B98838884BC3E6F8FDD79420D7799A51AD0D0780B87E"
+      "sha256": "2525D4A8C3ED4972C05E57E4DB2D244E1A708325CE4A5CFB24822D9FD7BB7ED3"
     }
   ]
 }

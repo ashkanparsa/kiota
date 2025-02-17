@@ -2,11 +2,15 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Nodes;
+using Kiota.Builder.CodeDOM;
+using Kiota.Builder.Extensions;
 using Kiota.Builder.Lock;
+using Microsoft.OpenApi.ApiManifest;
 
 namespace Kiota.Builder.Configuration;
+
 #pragma warning disable CA2227
-#pragma warning disable CA1002
 #pragma warning disable CA1056
 public class GenerationConfiguration : ICloneable
 {
@@ -23,18 +27,32 @@ public class GenerationConfiguration : ICloneable
                 (ApiManifestPath.StartsWith("http", StringComparison.OrdinalIgnoreCase) || File.Exists(ApiManifestPath));
         }
     }
+    public bool SkipGeneration
+    {
+        get; set;
+    }
+    public ConsumerOperation? Operation
+    {
+        get; set;
+    }
     public string OpenAPIFilePath { get; set; } = "openapi.yaml";
     public string ApiManifestPath { get; set; } = "apimanifest.json";
     public string OutputPath { get; set; } = "./output";
     public string ClientClassName { get; set; } = "ApiClient";
+    public AccessModifier TypeAccessModifier { get; set; } = AccessModifier.Public;
     public string ClientNamespaceName { get; set; } = "ApiSdk";
     public string NamespaceNameSeparator { get; set; } = ".";
+    public bool ExportPublicApi
+    {
+        get; set;
+    }
     internal const string ModelsNamespaceSegmentName = "models";
     public string ModelsNamespaceName
     {
         get => $"{ClientNamespaceName}{NamespaceNameSeparator}{ModelsNamespaceSegmentName}";
     }
     public GenerationLanguage Language { get; set; } = GenerationLanguage.CSharp;
+    public HashSet<PluginType> PluginTypes { get; set; } = [];
     public string? ApiRootUrl
     {
         get; set;
@@ -83,24 +101,11 @@ public class GenerationConfiguration : ICloneable
             return BarreledLanguagesWithConstantFileName.Contains(Language);
         }
     }
-    public bool ShouldRenderMethodsOutsideOfClasses
-    {
-        get
-        {
-            return MethodOutsideOfClassesLanguages.Contains(Language);
-        }
-    }
-    private static readonly HashSet<GenerationLanguage> MethodOutsideOfClassesLanguages = new(1) {
-        GenerationLanguage.Go,
-    };
-    private static readonly HashSet<GenerationLanguage> BarreledLanguages = new(3) {
+    private static readonly HashSet<GenerationLanguage> BarreledLanguages = [
         GenerationLanguage.Ruby,
-        GenerationLanguage.TypeScript,
         GenerationLanguage.Swift,
-    };
-    private static readonly HashSet<GenerationLanguage> BarreledLanguagesWithConstantFileName = new(1) {
-        GenerationLanguage.TypeScript
-    };
+    ];
+    private static readonly HashSet<GenerationLanguage> BarreledLanguagesWithConstantFileName = [];
     public bool CleanOutput
     {
         get; set;
@@ -116,6 +121,10 @@ public class GenerationConfiguration : ICloneable
     };
     public HashSet<string> IncludePatterns { get; set; } = new(0, StringComparer.OrdinalIgnoreCase);
     public HashSet<string> ExcludePatterns { get; set; } = new(0, StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// The overrides loaded from the api manifest when refreshing a client, as opposed to the user provided ones.
+    /// </summary>
+    public HashSet<string> PatternsOverride { get; set; } = new(0, StringComparer.OrdinalIgnoreCase);
     public bool ClearCache
     {
         get; set;
@@ -145,6 +154,13 @@ public class GenerationConfiguration : ICloneable
             ClearCache = ClearCache,
             DisabledValidationRules = new(DisabledValidationRules ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase),
             MaxDegreeOfParallelism = MaxDegreeOfParallelism,
+            SkipGeneration = SkipGeneration,
+            Operation = Operation,
+            PatternsOverride = new(PatternsOverride ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase),
+            PluginTypes = new(PluginTypes ?? Enumerable.Empty<PluginType>()),
+            DisableSSLValidation = DisableSSLValidation,
+            ExportPublicApi = ExportPublicApi,
+            PluginAuthInformation = PluginAuthInformation,
         };
     }
     private static readonly StringIEnumerableDeepComparer comparer = new();
@@ -161,12 +177,54 @@ public class GenerationConfiguration : ICloneable
             ClientNamespaceName.Equals(defaultConfiguration.ClientNamespaceName, StringComparison.Ordinal) &&
             !ClientNamespaceName.Equals(languageInfo.ClientNamespaceName, StringComparison.Ordinal))
             ClientNamespaceName = languageInfo.ClientNamespaceName;
-        if (languageInfo.StructuredMimeTypes.Any() &&
+        if (languageInfo.StructuredMimeTypes.Count != 0 &&
             comparer.Equals(StructuredMimeTypes, defaultConfiguration.StructuredMimeTypes) &&
             !comparer.Equals(languageInfo.StructuredMimeTypes, StructuredMimeTypes))
             StructuredMimeTypes = new(languageInfo.StructuredMimeTypes);
     }
+    public const string KiotaHashManifestExtensionKey = "x-ms-kiota-hash";
+    public const string KiotaVersionManifestExtensionKey = "x-ms-kiota-version";
+    public ApiDependency ToApiDependency(string configurationHash, Dictionary<string, HashSet<string>> templatesWithOperations, string targetDirectory)
+    {
+        var dependency = new ApiDependency()
+        {
+            ApiDescriptionUrl = NormalizeDescriptionLocation(targetDirectory),
+            ApiDeploymentBaseUrl = ApiRootUrl?.EndsWith('/') ?? false ? ApiRootUrl : $"{ApiRootUrl}/",
+            Extensions = new(),
+            Requests = templatesWithOperations.SelectMany(static x => x.Value.Select(y => new RequestInfo { Method = y.ToUpperInvariant(), UriTemplate = x.Key.DeSanitizeUrlTemplateParameter() })).ToList(),
+        };
+
+        if (!string.IsNullOrEmpty(configurationHash))
+        {
+            dependency.Extensions.Add(KiotaHashManifestExtensionKey, JsonValue.Create(configurationHash));// only include non empty value.
+        }
+        dependency.Extensions.Add(KiotaVersionManifestExtensionKey, Kiota.Generated.KiotaVersion.Current());
+        return dependency;
+    }
+    private string NormalizeDescriptionLocation(string targetDirectory)
+    {
+        if (!string.IsNullOrEmpty(OpenAPIFilePath) &&
+            !string.IsNullOrEmpty(targetDirectory) &&
+            !OpenAPIFilePath.StartsWith("http", StringComparison.OrdinalIgnoreCase) &&
+            Path.IsPathRooted(OpenAPIFilePath) &&
+            Path.GetFullPath(OpenAPIFilePath).StartsWith(Path.GetFullPath(targetDirectory), StringComparison.Ordinal))
+            return "./" + Path.GetRelativePath(targetDirectory, OpenAPIFilePath).NormalizePathSeparators();
+        return OpenAPIFilePath;
+    }
+    public bool IsPluginConfiguration => PluginTypes.Count != 0;
+
+    public bool DisableSSLValidation
+    {
+        get; set;
+    }
+
+    /// <summary>
+    /// Authentication information to be used when generating the plugin manifest.
+    /// </summary>
+    public PluginAuthConfiguration? PluginAuthInformation
+    {
+        get; set;
+    }
 }
 #pragma warning restore CA1056
-#pragma warning restore CA1002
 #pragma warning restore CA2227

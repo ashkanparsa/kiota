@@ -7,7 +7,7 @@ using Kiota.Builder.Writers;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Python;
-public class CodePropertyWriterTests : IDisposable
+public sealed class CodePropertyWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -81,7 +81,7 @@ public class CodePropertyWriterTests : IDisposable
     public void WritesRequestBuilder()
     {
         property.Kind = CodePropertyKind.RequestBuilder;
-        property.Documentation.Description = "This is a request builder";
+        property.Documentation.DescriptionTemplate = "This is a request builder";
         writer.Write(property);
         var result = tw.ToString();
         Assert.Contains("@property", result);
@@ -126,7 +126,7 @@ public class CodePropertyWriterTests : IDisposable
         var cls = new CodeClass
         {
             Name = "MainError",
-            Documentation = new CodeDocumentation { Description = "Some documentation" }
+            Documentation = new CodeDocumentation { DescriptionTemplate = "Some documentation" }
         };
         cls.AddProperty(new CodeProperty { Name = "message", Type = new CodeType { Name = "str" }, IsPrimaryErrorMessage = true });
         property.Type.Name = "str";

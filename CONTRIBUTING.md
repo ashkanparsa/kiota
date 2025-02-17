@@ -6,7 +6,7 @@ Thanks for your interest in contributing to Kiota! We welcome contributions from
 
 To get started, you'll need to have the following tools installed:
 
-- [.NET SDK 7.0](https://get.dot.net/7)
+- [.NET SDK 8.0](https://get.dot.net/8)
 
 ## Recommended tools
 
@@ -47,6 +47,14 @@ dotnet test ./tests/Kiota.Tests/
 
 ```sh
 dotnet test ./tests/Kiota.Builder.Tests
+```
+
+## Try out the generator
+
+You can try out the generator including your local changes by running:
+
+```sh
+dotnet run -c Release --project src/kiota/kiota.csproj -- <arguments you would pass>
 ```
 
 ## Contributing Code

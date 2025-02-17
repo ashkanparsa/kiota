@@ -13,7 +13,7 @@ public partial class StructuredMimeTypesCollection : ICollection<string>
     private readonly Dictionary<string, float> _mimeTypes;
     public int Count => _mimeTypes.Count;
     public bool IsReadOnly => false;
-    public StructuredMimeTypesCollection() : this(Array.Empty<string>()) { }
+    public StructuredMimeTypesCollection() : this([]) { }
     public StructuredMimeTypesCollection(IEnumerable<string> mimeTypes)
     {
         ArgumentNullException.ThrowIfNull(mimeTypes);
@@ -21,20 +21,15 @@ public partial class StructuredMimeTypesCollection : ICollection<string>
                                 .OfType<KeyValuePair<string, float>>()
                                 .ToDictionary(static x => x.Key, static x => x.Value, StringComparer.OrdinalIgnoreCase);
     }
-    private static Func<string, bool> isPriorityParameterName = static x => x.Equals("q", StringComparison.OrdinalIgnoreCase);
+    private static readonly Func<string, bool> isPriorityParameterName = static x => x.Equals("q", StringComparison.OrdinalIgnoreCase);
     private static KeyValuePair<string, float>? GetKeyAndPriority(string rawFormat)
     {
-        if (string.IsNullOrEmpty(rawFormat))
-            return null;
-        if (MediaTypeHeaderValue.TryParse(rawFormat, out var parsedFormat) && parsedFormat.MediaType is not null)
+        if (!string.IsNullOrEmpty(rawFormat) && MediaTypeHeaderValue.TryParse(rawFormat, out var parsedFormat) && parsedFormat.MediaType is not null)
         {
             var priority = parsedFormat.Parameters.FirstOrDefault(static x => isPriorityParameterName(x.Name)) is { } priorityParameter && float.TryParse(priorityParameter.Value, CultureInfo.InvariantCulture, out var resultPriority) ? resultPriority : 1;
             return new KeyValuePair<string, float>(formatMediaType(parsedFormat), priority);
         }
-        else
-        {
-            return null;
-        }
+        throw new ArgumentException($"The provided media type {rawFormat} is not valid");
     }
     private static string formatMediaType(MediaTypeHeaderValue value)
     {
@@ -87,7 +82,7 @@ public partial class StructuredMimeTypesCollection : ICollection<string>
     }
     private static string NormalizeMimeType(string key, float value)
     {
-        if (value == 1)
+        if (value >= 1f)
             return key;
         else
             return string.Create(CultureInfo.InvariantCulture, $"{key};q={value}");
@@ -127,9 +122,8 @@ public partial class StructuredMimeTypesCollection : ICollection<string>
                         .ThenByDescending(static x => x.Key, StringComparer.OrdinalIgnoreCase)
                         .Select(static x => x.Key);
     }
-    [GeneratedRegex(@"[^/+]+\+", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline, 2000)]
+    [GeneratedRegex(@"[^/+]+\+", RegexOptions.IgnoreCase | RegexOptions.Singleline, 2000)]
     private static partial Regex vendorStripRegex();
-    private readonly static Regex vendorStripRegexInstance = vendorStripRegex();
     private bool TryGetMimeType(string mimeType, out float result)
     {
         if (string.IsNullOrEmpty(mimeType))
@@ -140,10 +134,10 @@ public partial class StructuredMimeTypesCollection : ICollection<string>
 
         return _mimeTypes.TryGetValue(mimeType, out result) || // vendor and parameters
             mimeType.Contains('+', StringComparison.OrdinalIgnoreCase) &&
-            _mimeTypes.TryGetValue(vendorStripRegexInstance.Replace(mimeType, string.Empty), out result) || // no vendor with parameters
+            _mimeTypes.TryGetValue(vendorStripRegex().Replace(mimeType, string.Empty), out result) || // no vendor with parameters
             mimeType.Contains(';', StringComparison.OrdinalIgnoreCase) &&
             mimeType.Split(';', StringSplitOptions.RemoveEmptyEntries)[0] is string noParametersMimeType &&
             (_mimeTypes.TryGetValue(noParametersMimeType, out result) || // vendor without parameters
-            _mimeTypes.TryGetValue(vendorStripRegexInstance.Replace(noParametersMimeType, string.Empty), out result)); // no vendor without parameters
+            _mimeTypes.TryGetValue(vendorStripRegex().Replace(noParametersMimeType, string.Empty), out result)); // no vendor without parameters
     }
 }

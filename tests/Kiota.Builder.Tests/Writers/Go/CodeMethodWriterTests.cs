@@ -12,7 +12,7 @@ using Kiota.Builder.Writers.Go;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Go;
-public class CodeMethodWriterTests : IDisposable
+public sealed class CodeMethodWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -291,16 +291,20 @@ public class CodeMethodWriterTests : IDisposable
     }
     private CodeClass AddUnionTypeWrapper()
     {
-        var complexType1 = root.AddClass(new CodeClass
+        var complexType1 = root.AddInterface(new CodeInterface
         {
             Name = "ComplexType1",
-            Kind = CodeClassKind.Model,
+            Kind = CodeInterfaceKind.Model,
+            OriginalClass = new CodeClass { Name = "ComplexType1", Kind = CodeClassKind.Model }
         }).First();
-        var complexType2 = root.AddClass(new CodeClass
+
+        var complexType2 = root.AddInterface(new CodeInterface
         {
             Name = "ComplexType2",
-            Kind = CodeClassKind.Model,
+            Kind = CodeInterfaceKind.Model,
+            OriginalClass = new CodeClass { Name = "ComplexType2", Kind = CodeClassKind.Model }
         }).First();
+
         var unionTypeWrapper = root.AddClass(new CodeClass
         {
             Name = "UnionTypeWrapper",
@@ -718,6 +722,7 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("return nil, err", result);
         Assert.Contains("if res == nil", result);
         Assert.Contains("return nil, nil", result);
+        Assert.Contains("returns", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1137,7 +1142,7 @@ public class CodeMethodWriterTests : IDisposable
     }
     private const string AbstractionsPackageHash = "i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f";
     [Fact]
-    public async Task WritesRequestGeneratorBodyForScalar()
+    public async Task WritesRequestGeneratorBodyForScalarAsync()
     {
         setup();
         method.Kind = CodeMethodKind.RequestGenerator;
@@ -1156,26 +1161,24 @@ public class CodeMethodWriterTests : IDisposable
         AddRequestBodyParameters(executor);
         AddRequestBodyParameters();
         AddRequestProperties();
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
         method.AcceptedResponseTypes.Add("application/json");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformation()", result);
-        Assert.Contains("requestInfo.UrlTemplate = ", result);
-        Assert.Contains("requestInfo.PathParameters", result);
+        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformationWithMethodAndUrlTemplateAndPathParameters({AbstractionsPackageHash}.GET, m.urlTemplate, m.pathParameters)", result);
         Assert.Contains("requestInfo.Headers.TryAdd(\"Accept\", \"application/json\")", result);
-        Assert.Contains($"Method = {AbstractionsPackageHash}.GET", result);
         Assert.Contains("if c != nil", result);
         Assert.Contains("requestInfo.Headers.AddAll(", result);
         Assert.Contains("if c.Q != nil", result);
         Assert.Contains("requestInfo.AddQueryParameters(", result);
         Assert.Contains("requestInfo.AddRequestOptions(", result);
+        Assert.DoesNotContain("cast[i] = v", result);
         Assert.Contains("requestInfo.SetContentFromScalar(ctx, m.BaseRequestBuilder.RequestAdapter", result);
         Assert.Contains("return requestInfo, nil", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
-    public async Task WritesRequestGeneratorBodyForScalarCollection()
+    public async Task WritesRequestGeneratorBodyForScalarCollectionAsync()
     {
         setup();
         method.Kind = CodeMethodKind.RequestGenerator;
@@ -1196,26 +1199,25 @@ public class CodeMethodWriterTests : IDisposable
         AddRequestProperties();
         var bodyParameter = method.Parameters.OfKind(CodeParameterKind.RequestBody);
         bodyParameter.Type.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Complex;
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
         method.AcceptedResponseTypes.Add("application/json");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformation()", result);
-        Assert.Contains("requestInfo.UrlTemplate = ", result);
-        Assert.Contains("requestInfo.PathParameters", result);
+        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformationWithMethodAndUrlTemplateAndPathParameters({AbstractionsPackageHash}.GET, m.urlTemplate, m.pathParameters)", result);
         Assert.Contains("requestInfo.Headers.TryAdd(\"Accept\", \"application/json\")", result);
-        Assert.Contains($"Method = {AbstractionsPackageHash}.GET", result);
         Assert.Contains("if c != nil", result);
         Assert.Contains("requestInfo.Headers.AddAll(", result);
         Assert.Contains("if c.Q != nil", result);
         Assert.Contains("requestInfo.AddQueryParameters(", result);
         Assert.Contains("requestInfo.AddRequestOptions(", result);
+        Assert.Contains("cast := make([]interface{}, ", result);
+        Assert.Contains("cast[i] = v", result);
         Assert.Contains("requestInfo.SetContentFromScalarCollection(ctx, m.BaseRequestBuilder.RequestAdapter", result);
         Assert.Contains("return requestInfo, nil", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
-    public async Task WritesRequestGeneratorBodyForParsable()
+    public async Task WritesRequestGeneratorBodyForParsableAsync()
     {
         setup();
         method.Kind = CodeMethodKind.RequestGenerator;
@@ -1234,15 +1236,12 @@ public class CodeMethodWriterTests : IDisposable
         AddRequestBodyParameters(executor, true);
         AddRequestBodyParameters(useComplexTypeForBody: true);
         AddRequestProperties();
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
         method.AcceptedResponseTypes.Add("application/json");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformation()", result);
-        Assert.Contains("requestInfo.UrlTemplate = ", result);
-        Assert.Contains("requestInfo.PathParameters", result);
+        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformationWithMethodAndUrlTemplateAndPathParameters({AbstractionsPackageHash}.GET, m.urlTemplate, m.pathParameters)", result);
         Assert.Contains("requestInfo.Headers.TryAdd(\"Accept\", \"application/json\")", result);
-        Assert.Contains($"Method = {AbstractionsPackageHash}.GET", result);
         Assert.Contains("if c != nil", result);
         Assert.Contains("requestInfo.Headers.AddAll(", result);
         Assert.Contains("if c.Q != nil", result);
@@ -1253,7 +1252,35 @@ public class CodeMethodWriterTests : IDisposable
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
-    public async Task WritesRequestGeneratorBodyForParsableCollection()
+    public async Task WritesRequestGeneratorBodyWhenUrlTemplateIsOverrodeAsync()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        var executor = parentClass.AddMethod(new CodeMethod
+        {
+            Name = "executor",
+            HttpMethod = HttpMethod.Get,
+            Kind = CodeMethodKind.RequestExecutor,
+            ReturnType = new CodeType
+            {
+                Name = "string",
+                IsExternal = true,
+            }
+        }).First();
+        AddRequestBodyParameters(executor, true);
+        AddRequestBodyParameters(useComplexTypeForBody: true);
+        AddRequestProperties();
+        method.UrlTemplateOverride = "{baseurl+}/foo/bar";
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
+        method.AcceptedResponseTypes.Add("application/json");
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformationWithMethodAndUrlTemplateAndPathParameters({AbstractionsPackageHash}.GET, \"{{baseurl+}}/foo/bar\", m.pathParameters)", result);
+        AssertExtensions.CurlyBracesAreClosed(result);
+    }
+    [Fact]
+    public async Task WritesRequestGeneratorBodyForParsableCollectionAsync()
     {
         setup();
         method.Kind = CodeMethodKind.RequestGenerator;
@@ -1274,20 +1301,18 @@ public class CodeMethodWriterTests : IDisposable
         AddRequestProperties();
         var bodyParameter = method.Parameters.OfKind(CodeParameterKind.RequestBody);
         bodyParameter.Type.CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Complex;
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
         method.AcceptedResponseTypes.Add("application/json");
         writer.Write(method);
         var result = tw.ToString();
-        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformation()", result);
-        Assert.Contains("requestInfo.UrlTemplate = ", result);
-        Assert.Contains("requestInfo.PathParameters", result);
+        Assert.Contains($"requestInfo := {AbstractionsPackageHash}.NewRequestInformationWithMethodAndUrlTemplateAndPathParameters({AbstractionsPackageHash}.GET, m.urlTemplate, m.pathParameters)", result);
         Assert.Contains("requestInfo.Headers.TryAdd(\"Accept\", \"application/json\")", result);
-        Assert.Contains($"Method = {AbstractionsPackageHash}.GET", result);
         Assert.Contains("if c != nil", result);
         Assert.Contains("requestInfo.Headers.AddAll(", result);
         Assert.Contains("if c.Q != nil", result);
         Assert.Contains("requestInfo.AddQueryParameters(", result);
         Assert.Contains("requestInfo.AddRequestOptions(", result);
+        Assert.Contains("cast[i] =", result);
         Assert.Contains("requestInfo.SetContentFromParsableCollection(ctx, m.BaseRequestBuilder.RequestAdapter", result);
         Assert.Contains("return requestInfo, nil", result);
         AssertExtensions.CurlyBracesAreClosed(result);
@@ -1310,6 +1335,44 @@ public class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains("SetStreamContentAndContentType", result, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("application/json", result, StringComparison.OrdinalIgnoreCase);
+        AssertExtensions.CurlyBracesAreClosed(result);
+    }
+    [Fact]
+    public async Task WritesRequestExecutorForScalarTypesAsync()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestExecutor;
+        method.HttpMethod = HttpMethod.Get;
+        method.ReturnType = new CodeType
+        {
+            Name = "DateOnly",
+            IsExternal = true,
+            CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Complex,
+        };
+        AddRequestBodyParameters(method, false);
+        AddRequestBodyParameters(useComplexTypeForBody: false);
+        AddRequestProperties();
+        method.AddParameter(new CodeParameter
+        {
+            Name = "ctx",
+            Kind = CodeParameterKind.Cancellation,
+            Type = new CodeType
+            {
+                Name = "context.Context",
+                IsExternal = true,
+                IsNullable = false,
+            },
+            Optional = false,
+        });
+
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Go }, parentClass.Parent as CodeNamespace);
+        method.AcceptedResponseTypes.Add("application/json");
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains($"func (m *ParentClass) MethodName(ctx context.Context, b []RequestOption, c *RequestConfig)([]i878a80d2330e89d26896388a3f487eef27b0a0e6c010c493bf80be1452208f91.DateOnly, error)", result);
+        Assert.Contains("res, err := m.BaseRequestBuilder.RequestAdapter.SendPrimitiveCollection(ctx, requestInfo, \"dateonly\", nil)", result);
+        Assert.Contains($"val := make([]i878a80d2330e89d26896388a3f487eef27b0a0e6c010c493bf80be1452208f91.DateOnly, len(res))", result);
+        Assert.Contains("return val, nil", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1339,7 +1402,7 @@ public class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains("SetStreamContentAndContentType", result, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("application/json", result, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(", requestContentType", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(", *requestContentType", result, StringComparison.OrdinalIgnoreCase);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
@@ -1537,13 +1600,13 @@ public class CodeMethodWriterTests : IDisposable
     public void WritesMethodSyncDescription()
     {
         setup();
-        method.Documentation.Description = MethodDescription;
+        method.Documentation.DescriptionTemplate = MethodDescription;
         method.IsAsync = false;
         var parameter = new CodeParameter
         {
             Documentation = new()
             {
-                Description = ParamDescription
+                DescriptionTemplate = ParamDescription
             },
             Name = ParamName,
             Type = new CodeType
@@ -1561,7 +1624,7 @@ public class CodeMethodWriterTests : IDisposable
     public void WritesMethodDescriptionLink()
     {
         setup();
-        method.Documentation.Description = MethodDescription;
+        method.Documentation.DescriptionTemplate = MethodDescription;
         method.Documentation.DocumentationLabel = "see more";
         method.Documentation.DocumentationLink = new("https://foo.org/docs");
         method.IsAsync = false;
@@ -1569,7 +1632,7 @@ public class CodeMethodWriterTests : IDisposable
         {
             Documentation = new()
             {
-                Description = ParamDescription,
+                DescriptionTemplate = ParamDescription,
             },
             Name = ParamName,
             Type = new CodeType
@@ -1587,7 +1650,7 @@ public class CodeMethodWriterTests : IDisposable
     public void Defensive()
     {
         setup();
-        var codeMethodWriter = new CodeMethodWriter(new GoConventionService());
+        var codeMethodWriter = new CodeMethodWriter(new GoConventionService(), false);
         Assert.Throws<ArgumentNullException>(() => codeMethodWriter.WriteCodeElement(null, writer));
         Assert.Throws<ArgumentNullException>(() => codeMethodWriter.WriteCodeElement(method, null));
         var originalParent = method.Parent;
@@ -1722,7 +1785,7 @@ public class CodeMethodWriterTests : IDisposable
                 Name = "string"
             }
         });
-        method.Documentation.Description = "Some description";
+        method.Documentation.DescriptionTemplate = "Some description";
         writer.Write(method);
         var result = tw.ToString();
         Assert.Contains($"// {method.Name.ToFirstCharacterUpperCase()} some description", result);
@@ -1808,6 +1871,32 @@ public class CodeMethodWriterTests : IDisposable
                 Name = "string",
             }
         });
+        var defaultValueNull = "\"null\"";
+        var nullPropName = "propWithDefaultNullValue";
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = nullPropName,
+            DefaultValue = defaultValueNull,
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType
+            {
+                Name = "int",
+                IsNullable = true
+            }
+        });
+        var defaultValueBool = "\"true\"";
+        var boolPropName = "propWithDefaultBoolValue";
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = boolPropName,
+            DefaultValue = defaultValueBool,
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType
+            {
+                Name = "boolean",
+                IsNullable = true
+            }
+        });
         AddRequestProperties();
         method.AddParameter(new CodeParameter
         {
@@ -1822,7 +1911,36 @@ public class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains(parentClass.Name.ToFirstCharacterUpperCase(), result);
         Assert.Contains($"m.Set{propName.ToFirstCharacterUpperCase()}({defaultValue})", result);
+        Assert.Contains($"m.SetPropWithDefaultNullValue(nil)", result);
+        Assert.Contains($"propWithDefaultBoolValueValue := true", result);
+        Assert.Contains($"m.SetPropWithDefaultBoolValue(&propWithDefaultBoolValueValue)", result);
         Assert.Contains("NewBaseRequestBuilder", result);
+    }
+    [Fact]
+    public void WritesConstructorWithEnumValue()
+    {
+        setup();
+        var modelsNamespace = root.AddNamespace("models");
+        method.Kind = CodeMethodKind.Constructor;
+        var serializationName = "1024x1024";
+        var defaultValue = "TENTWENTYFOUR_BY_TENTWENTYFOUR";
+        var propName = "size";
+        var codeEnum = modelsNamespace.AddEnum(new CodeEnum
+        {
+            Name = "pictureSize"
+        }).First();
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = propName,
+            DefaultValue = defaultValue,
+            SerializationName = serializationName,
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType { TypeDefinition = codeEnum }
+        });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains(parentClass.Name.ToFirstCharacterUpperCase(), result);
+        Assert.Contains($"Set{propName.ToFirstCharacterUpperCase()}({defaultValue})", result);//ensure symbol is cleaned up
     }
     [Fact]
     public void WritesWithUrl()
@@ -2029,7 +2147,7 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("EnableBackingStore", result);
     }
     [Fact]
-    public async Task AccessorsTargetingEscapedPropertiesAreNotEscapedThemselves()
+    public async Task AccessorsTargetingEscapedPropertiesAreNotEscapedThemselvesAsync()
     {
         setup();
         var model = root.AddClass(new CodeClass
@@ -2045,7 +2163,7 @@ public class CodeMethodWriterTests : IDisposable
             Kind = CodePropertyKind.Custom,
         });
         root.AddNamespace("ApiSdk/models"); // so the interface copy refiner goes through
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.Go }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.Go }, root);
         var getter = model.Methods.First(x => x.IsOfKind(CodeMethodKind.Getter));
         var setter = model.Methods.First(x => x.IsOfKind(CodeMethodKind.Setter));
         var tempWriter = LanguageWriter.GetLanguageWriter(GenerationLanguage.Go, DefaultPath, DefaultName);
@@ -2094,6 +2212,17 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("2021-01-01", result);
         Assert.Contains("v2.0", result);
         Assert.Contains("// Deprecated:", result);
+    }
+    [Fact]
+    public void WritesDeprecationInformationFromBuilder()
+    {
+        setup();
+        var newMethod = method.Clone() as CodeMethod;
+        newMethod.Name = "NewAwesomeMethod";// new method replacement
+        method.Deprecation = new("This method is obsolete. Use {TypeName} instead.", IsDeprecated: true, TypeReferences: new() { { "TypeName", new CodeType { TypeDefinition = newMethod, IsExternal = false } } });
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("This method is obsolete. Use NewAwesomeMethod instead.", result);
     }
     [Fact]
     public void WritesComposedMarker()
@@ -2173,5 +2302,32 @@ public class CodeMethodWriterTests : IDisposable
         // Then
         Assert.Contains("Error()(string) {", result);
         Assert.Contains("return *(m.GetProp1()", result);
+    }
+
+    [Fact]
+    public void WritesRequestGeneratorAcceptHeaderQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        method.AcceptedResponseTypes.Add("application/json; profile=\"CamelCase\"");
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("requestInfo.Headers.TryAdd(\"Accept\", \"application/json; profile=\\\"CamelCase\\\"\")", result);
+    }
+
+    [Fact]
+    public void WritesRequestGeneratorContentTypeQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        AddRequestProperties();
+        AddRequestBodyParameters();
+        method.RequestBodyContentType = "application/json; profile=\"CamelCase\"";
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("\"application/json; profile=\\\"CamelCase\\\"\"", result);
     }
 }

@@ -8,7 +8,7 @@ using Kiota.Builder.Writers.TypeScript;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.TypeScript;
-public class CodeClassDeclarationWriterTests : IDisposable
+public sealed class CodeClassDeclarationWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -41,8 +41,8 @@ public class CodeClassDeclarationWriterTests : IDisposable
     {
         codeElementWriter.WriteCodeElement(parentClass.StartBlock, writer);
         var result = tw.ToString();
-        Assert.Contains("// eslint-disable", result);
-        Assert.Contains("// tslint:disable", result);
+        Assert.Contains("/* eslint-disable */", result);
+        Assert.Contains("/* tslint:disable */", result);
     }
     [Fact]
     public void WritesSimpleDeclaration()

@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace Kiota.Builder.IntegrationTests;
-public class GenerateSample : IDisposable
+public sealed class GenerateSample : IDisposable
 {
     public void Dispose()
     {
@@ -20,13 +20,15 @@ public class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.Java, false)]
     [InlineData(GenerationLanguage.TypeScript, false)]
     [InlineData(GenerationLanguage.Go, false)]
+    [InlineData(GenerationLanguage.Dart, false)]
     [InlineData(GenerationLanguage.Ruby, false)]
     [InlineData(GenerationLanguage.CSharp, true)]
     [InlineData(GenerationLanguage.Java, true)]
     [InlineData(GenerationLanguage.PHP, false)]
     [InlineData(GenerationLanguage.TypeScript, true)]
+    [InlineData(GenerationLanguage.Dart, true)]
     [Theory]
-    public async Task GeneratesTodo(GenerationLanguage language, bool backingStore)
+    public async Task GeneratesTodoAsync(GenerationLanguage language, bool backingStore)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -36,7 +38,7 @@ public class GenerateSample : IDisposable
         var configuration = new GenerationConfiguration
         {
             Language = language,
-            OpenAPIFilePath = "ToDoApi.yaml",
+            OpenAPIFilePath = GetAbsolutePath("ToDoApi.yaml"),
             OutputPath = $".\\Generated\\Todo\\{language}{backingStoreSuffix}",
             UsesBackingStore = backingStore,
         };
@@ -46,13 +48,15 @@ public class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.Java, false)]
     [InlineData(GenerationLanguage.TypeScript, false)]
     [InlineData(GenerationLanguage.Go, false)]
+    [InlineData(GenerationLanguage.Dart, false)]
     [InlineData(GenerationLanguage.Ruby, false)]
     [InlineData(GenerationLanguage.CSharp, true)]
     [InlineData(GenerationLanguage.Java, true)]
     [InlineData(GenerationLanguage.PHP, false)]
     [InlineData(GenerationLanguage.TypeScript, true)]
+    [InlineData(GenerationLanguage.Dart, true)]
     [Theory]
-    public async Task GeneratesModelWithDictionary(GenerationLanguage language, bool backingStore)
+    public async Task GeneratesModelWithDictionaryAsync(GenerationLanguage language, bool backingStore)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -62,7 +66,7 @@ public class GenerateSample : IDisposable
         var configuration = new GenerationConfiguration
         {
             Language = language,
-            OpenAPIFilePath = "ModelWithDictionary.yaml",
+            OpenAPIFilePath = GetAbsolutePath("ModelWithDictionary.yaml"),
             OutputPath = $".\\Generated\\ModelWithDictionary\\{language}{backingStoreSuffix}",
             UsesBackingStore = backingStore,
         };
@@ -72,13 +76,15 @@ public class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.Java, false)]
     [InlineData(GenerationLanguage.TypeScript, false)]
     [InlineData(GenerationLanguage.Go, false)]
+    [InlineData(GenerationLanguage.Dart, false)]
     [InlineData(GenerationLanguage.Ruby, false)]
     [InlineData(GenerationLanguage.CSharp, true)]
     [InlineData(GenerationLanguage.Java, true)]
     [InlineData(GenerationLanguage.PHP, false)]
     [InlineData(GenerationLanguage.TypeScript, true)]
+    [InlineData(GenerationLanguage.Dart, true)]
     [Theory]
-    public async Task GeneratesResponseWithMultipleReturnFormats(GenerationLanguage language, bool backingStore)
+    public async Task GeneratesResponseWithMultipleReturnFormatsAsync(GenerationLanguage language, bool backingStore)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -88,7 +94,7 @@ public class GenerateSample : IDisposable
         var configuration = new GenerationConfiguration
         {
             Language = language,
-            OpenAPIFilePath = "ResponseWithMultipleReturnFormats.yaml",
+            OpenAPIFilePath = GetAbsolutePath("ResponseWithMultipleReturnFormats.yaml"),
             OutputPath = $".\\Generated\\ResponseWithMultipleReturnFormats\\{language}{backingStoreSuffix}",
             UsesBackingStore = backingStore,
         };
@@ -97,12 +103,13 @@ public class GenerateSample : IDisposable
     [InlineData(GenerationLanguage.CSharp)]
     [InlineData(GenerationLanguage.Java)]
     [InlineData(GenerationLanguage.Go)]
+    [InlineData(GenerationLanguage.Dart)]
     [InlineData(GenerationLanguage.Ruby)]
     [InlineData(GenerationLanguage.Python)]
     [InlineData(GenerationLanguage.TypeScript)]
     [InlineData(GenerationLanguage.PHP)]
     [Theory]
-    public async Task GeneratesErrorsInliningParents(GenerationLanguage language)
+    public async Task GeneratesErrorsInliningParentsAsync(GenerationLanguage language)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -111,14 +118,37 @@ public class GenerateSample : IDisposable
         var configuration = new GenerationConfiguration
         {
             Language = language,
-            OpenAPIFilePath = "InheritingErrors.yaml",
+            OpenAPIFilePath = GetAbsolutePath("InheritingErrors.yaml"),
             OutputPath = $".\\Generated\\ErrorInlineParents\\{language}",
+        };
+        await new KiotaBuilder(logger, configuration, _httpClient).GenerateClientAsync(new());
+    }
+    [InlineData(GenerationLanguage.CSharp)]
+    [InlineData(GenerationLanguage.Java)]
+    [InlineData(GenerationLanguage.Go)]
+    [InlineData(GenerationLanguage.Dart)]
+    [InlineData(GenerationLanguage.Ruby)]
+    [InlineData(GenerationLanguage.Python)]
+    [InlineData(GenerationLanguage.TypeScript)]
+    [InlineData(GenerationLanguage.PHP)]
+    [Theory]
+    public async Task GeneratesCorrectEnumsAsync(GenerationLanguage language)
+    {
+        var logger = LoggerFactory.Create(builder =>
+        {
+        }).CreateLogger<KiotaBuilder>();
+
+        var configuration = new GenerationConfiguration
+        {
+            Language = language,
+            OpenAPIFilePath = GetAbsolutePath("EnumHandling.yaml"),
+            OutputPath = $".\\Generated\\EnumHandling\\{language}",
         };
         await new KiotaBuilder(logger, configuration, _httpClient).GenerateClientAsync(new());
     }
     [InlineData(GenerationLanguage.Java)]
     [Theory]
-    public async Task GeneratesIdiomaticChildrenNames(GenerationLanguage language)
+    public async Task GeneratesIdiomaticChildrenNamesAsync(GenerationLanguage language)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -128,16 +158,24 @@ public class GenerateSample : IDisposable
         var configuration = new GenerationConfiguration
         {
             Language = language,
-            OpenAPIFilePath = "NoUnderscoresInModel.yaml",
+            OpenAPIFilePath = GetAbsolutePath("NoUnderscoresInModel.yaml"),
             OutputPath = OutputPath,
             CleanOutput = true,
         };
         await new KiotaBuilder(logger, configuration, _httpClient).GenerateClientAsync(new());
 
+        var fullText = "";
+        foreach (var file in Directory.GetFiles(OutputPath, "*.*", SearchOption.AllDirectories))
+        {
+            fullText += File.ReadAllText(file);
+        }
+
         Assert.Empty(Directory.GetFiles(OutputPath, "*_*", SearchOption.AllDirectories));
+        Assert.DoesNotContain("_", fullText);
     }
     [InlineData(GenerationLanguage.CSharp)]
     [InlineData(GenerationLanguage.Go)]
+    [InlineData(GenerationLanguage.Dart)]
     [InlineData(GenerationLanguage.Java)]
     [InlineData(GenerationLanguage.PHP)]
     [InlineData(GenerationLanguage.Python)]
@@ -145,7 +183,7 @@ public class GenerateSample : IDisposable
     // [InlineData(GenerationLanguage.TypeScript)] // TODO: the "getQueryParameter" is added to the interface V1RequestBuilderGetQueryParameters but is not getting written because removed by ReplaceRequestConfigurationsQueryParamsWithInterfaces in the refiner
     // [InlineData(GenerationLanguage.Swift)] // TODO: incomplete
     [Theory]
-    public async Task GeneratesUritemplateHints(GenerationLanguage language)
+    public async Task GeneratesUritemplateHintsAsync(GenerationLanguage language)
     {
         var logger = LoggerFactory.Create(builder =>
         {
@@ -155,7 +193,7 @@ public class GenerateSample : IDisposable
         var configuration = new GenerationConfiguration
         {
             Language = language,
-            OpenAPIFilePath = "GeneratesUritemplateHints.yaml",
+            OpenAPIFilePath = GetAbsolutePath("GeneratesUritemplateHints.yaml"),
             OutputPath = OutputPath,
             CleanOutput = true,
         };
@@ -172,11 +210,14 @@ public class GenerateSample : IDisposable
             case GenerationLanguage.CSharp:
                 Assert.Contains("[QueryParameter(\"startDateTime\")]", fullText);
                 break;
+            case GenerationLanguage.Dart:
+                Assert.Contains("'EndDateTime' : endDateTime", fullText);
+                break;
             case GenerationLanguage.Go:
                 Assert.Contains("`uriparametername:\"startDateTime\"`", fullText);
                 break;
             case GenerationLanguage.Java:
-                Assert.Contains("@QueryParameter(name = \"EndDateTime\")", fullText);
+                Assert.Contains("allQueryParams.put(\"EndDateTime\", endDateTime)", fullText);
                 break;
             case GenerationLanguage.PHP:
                 Assert.Contains("@QueryParameter(\"EndDateTime\")", fullText);
@@ -194,4 +235,5 @@ public class GenerateSample : IDisposable
 
         }
     }
+    private static string GetAbsolutePath(string relativePath) => Path.Combine(Directory.GetCurrentDirectory(), relativePath);
 }

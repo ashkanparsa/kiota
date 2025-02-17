@@ -1,12 +1,14 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
 namespace Kiota.Builder.CodeDOM;
 #pragma warning disable CA1711
-public class CodeEnum : CodeBlock<BlockDeclaration, BlockEnd>, IDocumentedElement, ITypeDefinition, IDeprecableElement
+public class CodeEnum : CodeBlock<BlockDeclaration, BlockEnd>, IDocumentedElement, ITypeDefinition, IDeprecableElement, IAccessibleElement
 {
 #pragma warning restore CA2227
+    public AccessModifier Access { get; set; } = AccessModifier.Public;
     public bool Flags
     {
         get; set;
@@ -33,6 +35,10 @@ public class CodeEnum : CodeBlock<BlockDeclaration, BlockEnd>, IDocumentedElemen
         }
     }
     public DeprecationInformation? Deprecation
+    {
+        get; set;
+    }
+    public CodeConstant? CodeEnumObject
     {
         get; set;
     }

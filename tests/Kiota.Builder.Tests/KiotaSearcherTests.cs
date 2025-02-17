@@ -10,11 +10,11 @@ using Moq;
 using Xunit;
 
 namespace Kiota.Builder.Tests;
-public class KiotaSearcherTests : IDisposable
+public sealed class KiotaSearcherTests : IDisposable
 {
     private readonly HttpClient httpClient = new();
     [Fact]
-    public void DefensivePrograming()
+    public async Task DefensiveProgramingAsync()
     {
         Assert.Throws<ArgumentNullException>(() => new KiotaSearcher(null, new SearchConfiguration(), httpClient, null, null));
         Assert.Throws<ArgumentNullException>(() => new KiotaSearcher(new Mock<ILogger<KiotaSearcher>>().Object, null, httpClient, null, null));
@@ -22,7 +22,7 @@ public class KiotaSearcherTests : IDisposable
         Assert.Throws<ArgumentNullException>(() => new GitHubSearchProvider(httpClient, new Mock<ILogger<KiotaSearcher>>().Object, false, null, null, null));
         Assert.Throws<ArgumentNullException>(() => new GitHubSearchProvider(httpClient, null, false, new GitHubConfiguration(), null, null));
         Assert.Throws<ArgumentNullException>(() => new GitHubSearchProvider(null, new Mock<ILogger<KiotaSearcher>>().Object, false, new GitHubConfiguration(), null, null));
-        Assert.ThrowsAsync<ArgumentNullException>(() => new GitHubSearchProvider(httpClient, new Mock<ILogger<KiotaSearcher>>().Object, false, new GitHubConfiguration(), null, null).SearchAsync(null, null, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => new GitHubSearchProvider(httpClient, new Mock<ILogger<KiotaSearcher>>().Object, false, new GitHubConfiguration(), null, null).SearchAsync(null, null, CancellationToken.None));
     }
     private static SearchConfiguration searchConfigurationFactory => new()
     {
@@ -31,7 +31,7 @@ public class KiotaSearcherTests : IDisposable
         }
     };
     [Fact]
-    public async Task GetsMicrosoftGraphBothVersions()
+    public async Task GetsMicrosoftGraphBothVersionsAsync()
     {
         var searchConfiguration = searchConfigurationFactory;
         var searcher = new KiotaSearcher(new Mock<ILogger<KiotaSearcher>>().Object, searchConfiguration, httpClient, null, null);
@@ -39,7 +39,7 @@ public class KiotaSearcherTests : IDisposable
         Assert.Equal(2, results.Count);
     }
     [Fact]
-    public async Task GetsMicrosoftGraph()
+    public async Task GetsMicrosoftGraphAsync()
     {
         var searchConfiguration = searchConfigurationFactory;
         var searcher = new KiotaSearcher(new Mock<ILogger<KiotaSearcher>>().Object, searchConfiguration, httpClient, null, null);
@@ -48,7 +48,7 @@ public class KiotaSearcherTests : IDisposable
         Assert.Equal("https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/master/openapi/v1.0/openapi.yaml", results.First().Value.DescriptionUrl.ToString());
     }
     [Fact]
-    public async Task GetsMicrosoftGraphBeta()
+    public async Task GetsMicrosoftGraphBetaAsync()
     {
         var searchConfiguration = searchConfigurationFactory;
         var searcher = new KiotaSearcher(new Mock<ILogger<KiotaSearcher>>().Object, searchConfiguration, httpClient, null, null);
@@ -57,14 +57,14 @@ public class KiotaSearcherTests : IDisposable
         Assert.Equal("https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/master/openapi/beta/openapi.yaml", results.First().Value.DescriptionUrl.ToString());
     }
     [Fact]
-    public async Task DoesntFailOnEmptyTerm()
+    public async Task DoesntFailOnEmptyTermAsync()
     {
         var searcher = new KiotaSearcher(new Mock<ILogger<KiotaSearcher>>().Object, searchConfigurationFactory, httpClient, null, null);
         var results = await searcher.SearchAsync(string.Empty, string.Empty, new CancellationToken());
         Assert.Empty(results);
     }
     [Fact]
-    public async Task GetsGithubFromApisGuru()
+    public async Task GetsGithubFromApisGuruAsync()
     {
         var searchConfiguration = searchConfigurationFactory;
         var searcher = new KiotaSearcher(new Mock<ILogger<KiotaSearcher>>().Object, searchConfiguration, httpClient, null, null);
@@ -72,12 +72,16 @@ public class KiotaSearcherTests : IDisposable
         Assert.NotEmpty(results);
     }
     [Fact]
-    public async Task GetsGithubFromApisGuruWithExactMatch()
+    public async Task GetsGithubFromApisGuruWithExactMatchAsync()
     {
         var searchConfiguration = searchConfigurationFactory;
         var searcher = new KiotaSearcher(new Mock<ILogger<KiotaSearcher>>().Object, searchConfiguration, httpClient, null, null);
         var results = await searcher.SearchAsync("apisguru::github.com:api.github.com.2022-11-28", string.Empty, new CancellationToken());
         Assert.Single(results);
+        var result = results.First();
+        var resultUrl = result.Value.DescriptionUrl;
+        var bytes = await httpClient.GetByteArrayAsync(resultUrl);
+        Assert.NotEmpty(bytes);
     }
     public void Dispose()
     {

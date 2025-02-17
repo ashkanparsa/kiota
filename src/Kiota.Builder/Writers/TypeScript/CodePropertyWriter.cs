@@ -1,6 +1,7 @@
 ﻿using System;
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Extensions;
+using static Kiota.Builder.Writers.TypeScript.TypeScriptConventionService;
 
 namespace Kiota.Builder.Writers.TypeScript;
 public class CodePropertyWriter : BaseElementWriter<CodeProperty, TypeScriptConventionService>
@@ -12,7 +13,7 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, TypeScriptConv
         ArgumentNullException.ThrowIfNull(writer);
         if (codeElement.ExistsInExternalBaseType)
             return;
-        var returnType = conventions.GetTypeString(codeElement.Type, codeElement);
+        var returnType = GetTypescriptTypeString(codeElement.Type, codeElement, inlineComposedTypeString: true);
         var isFlagEnum = codeElement.Type is CodeType { TypeDefinition: CodeEnum { Flags: true } }
                          && !codeElement.Type.IsCollection;//collection of flagged enums are not supported/don't make sense
 
@@ -22,30 +23,23 @@ public class CodePropertyWriter : BaseElementWriter<CodeProperty, TypeScriptConv
             case CodeInterface:
                 WriteCodePropertyForInterface(codeElement, writer, returnType, isFlagEnum);
                 break;
-            case CodeClass codeClass:
-                WriteCodePropertyForClass(codeElement, codeClass, writer, returnType, isFlagEnum);
-                break;
+            case CodeClass:
+                throw new InvalidOperationException($"All properties are defined on interfaces in TypeScript.");
         }
     }
-
     private static void WriteCodePropertyForInterface(CodeProperty codeElement, LanguageWriter writer, string returnType, bool isFlagEnum)
-    {
-        writer.WriteLine($"{codeElement.Name.ToFirstCharacterLowerCase()}?: {returnType}{(isFlagEnum ? "[]" : string.Empty)};");
-    }
-
-    private void WriteCodePropertyForClass(CodeProperty codeElement, CodeClass parentClass, LanguageWriter writer, string returnType, bool isFlagEnum)
     {
         switch (codeElement.Kind)
         {
-            case CodePropertyKind.ErrorMessageOverride:
-                throw new InvalidOperationException($"Primary message mapping is done in deserializer function in TypeScript.");
             case CodePropertyKind.RequestBuilder:
-                writer.StartBlock($"{conventions.GetAccessModifier(codeElement.Access)} get {codeElement.Name.ToFirstCharacterLowerCase()}(): {returnType} {{");
-                conventions.AddRequestBuilderBody(parentClass, returnType, writer);
-                writer.CloseBlock();
+                writer.WriteLine($"get {codeElement.Name.ToFirstCharacterLowerCase()}(): {returnType};");
+                break;
+            case CodePropertyKind.QueryParameter:
+            case CodePropertyKind.AdditionalData:
+                writer.WriteLine($"{codeElement.Name.ToFirstCharacterLowerCase()}?: {returnType}{(isFlagEnum ? "[]" : string.Empty)};");
                 break;
             default:
-                writer.WriteLine($"{conventions.GetAccessModifier(codeElement.Access)} {codeElement.NamePrefix}{codeElement.Name.ToFirstCharacterLowerCase()}{(codeElement.Type.IsNullable ? "?" : string.Empty)}: {returnType}{(isFlagEnum ? "[]" : string.Empty)};");
+                writer.WriteLine($"{codeElement.Name.ToFirstCharacterLowerCase()}?: {returnType}{(isFlagEnum ? "[]" : string.Empty)} | null;");
                 break;
         }
     }

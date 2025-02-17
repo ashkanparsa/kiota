@@ -53,7 +53,7 @@ function Kill-MockServer {
     Pop-Location
 }
 
-$mockSeverITFolder = $null
+$mockSeverITFolder = "inexistent-it-folder"
 $configPath = Join-Path -Path $PSScriptRoot -ChildPath "config.json"
 $jsonValue = Get-Content -Path $configPath -Raw | ConvertFrom-Json
 $descriptionValue = $jsonValue.psobject.properties.Where({ $_.name -eq $descriptionUrl }).value
@@ -63,8 +63,14 @@ if ($null -ne $descriptionValue) {
     }
 }
 
+$mockServerTest = $false
+$itTestPath = Join-Path -Path $testPath -ChildPath $mockSeverITFolder
+if (Test-Path -Path $itTestPath) {
+    $mockServerTest = $true
+}
+
 # Start MockServer if needed
-if (!([string]::IsNullOrEmpty($mockSeverITFolder))) {
+if ($mockServerTest) {
     # Kill any leftover MockServer
     Kill-MockServer
     Push-Location $mockServerPath
@@ -72,7 +78,7 @@ if (!([string]::IsNullOrEmpty($mockSeverITFolder))) {
     Pop-Location
 
     # Provision Mock server with the right spec
-    $openapiUrl = Join-Path -Path $PSScriptRoot -ChildPath "openapi.yaml"
+    $openapiUrl = (Join-Path -Path $PSScriptRoot -ChildPath "openapi.yaml") -replace '\\', '/'
     
     # provision MockServer to mock the specific openapi description https://www.mock-server.com/mock_server/using_openapi.html#button_open_api_filepath
     Retry({ Invoke-WebRequest -Method PUT -Body "{ `"specUrlOrPayload`": `"$openapiUrl`" }" -Uri http://localhost:1080/mockserver/openapi -ContentType application/json })
@@ -80,8 +86,7 @@ if (!([string]::IsNullOrEmpty($mockSeverITFolder))) {
 
 Push-Location $testPath
 if ($language -eq "csharp") {
-    if (!([string]::IsNullOrEmpty($mockSeverITFolder))) {
-        $itTestPath = Join-Path -Path $testPath -ChildPath $mockSeverITFolder
+    if ($mockServerTest) {
         Push-Location $itTestPath
 
         $itTestPathSources = Join-Path -Path $testPath -ChildPath "client"
@@ -104,8 +109,7 @@ if ($language -eq "csharp") {
     }
 }
 elseif ($language -eq "java") {
-    if (!([string]::IsNullOrEmpty($mockSeverITFolder))) {
-        $itTestPath = Join-Path -Path $testPath -ChildPath $mockSeverITFolder
+    if ($mockServerTest) {
         Push-Location $itTestPath
 
         $itTestPathSources = Join-Path -Path $testPath -ChildPath "src" -AdditionalChildPath "*"
@@ -128,8 +132,7 @@ elseif ($language -eq "java") {
     }
 }
 elseif ($language -eq "go") {
-    if (!([string]::IsNullOrEmpty($mockSeverITFolder))) {
-        $itTestPath = Join-Path -Path $testPath -ChildPath $mockSeverITFolder
+    if ($mockServerTest) {
         Push-Location $itTestPath
 
         $itTestPathSources = Join-Path -Path $testPath -ChildPath "client"
@@ -182,8 +185,7 @@ elseif ($language -eq "python") {
         mypy integration_test
     } -ErrorAction Stop
 
-    if (!([string]::IsNullOrEmpty($mockSeverITFolder))) {
-        $itTestPath = Join-Path -Path $testPath -ChildPath $mockSeverITFolder
+    if ($mockServerTest) {
         Push-Location $itTestPath
 
         $itTestPathSources = Join-Path -Path $testPath -ChildPath "integration_test" -AdditionalChildPath "client"
@@ -195,6 +197,29 @@ elseif ($language -eq "python") {
 
         Invoke-Call -ScriptBlock {
             pytest
+        } -ErrorAction Stop
+
+        Pop-Location
+    }
+}
+elseif ($language -eq "dart") {
+    Invoke-Call -ScriptBlock {
+        dart pub get
+        dart analyze lib/
+    } -ErrorAction Stop
+
+    if ($mockServerTest) {
+        Push-Location $itTestPath
+
+        $itTestPathSources = Join-Path -Path $testPath -ChildPath "lib"
+        $itTestPathDest = Join-Path -Path $itTestPath -ChildPath "lib"
+        if (Test-Path $itTestPathDest) {
+            Remove-Item $itTestPathDest -Force -Recurse
+        }
+        Copy-Item -Path $itTestPathSources -Destination $itTestPathDest -Recurse
+
+        Invoke-Call -ScriptBlock {
+            dart test
         } -ErrorAction Stop
 
         Pop-Location

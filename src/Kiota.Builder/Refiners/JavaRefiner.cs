@@ -7,17 +7,20 @@ using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Configuration;
 using Kiota.Builder.Extensions;
 using Kiota.Builder.Writers.Java;
+using Microsoft.Kiota.Abstractions;
 
 namespace Kiota.Builder.Refiners;
 public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
 {
     public JavaRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             CorrectCommonNames(generatedCode);
+            DeduplicateErrorMappings(generatedCode);
+            AddQueryParameterExtractorMethod(generatedCode);
             MoveRequestBuilderPropertiesToBaseType(generatedCode,
                 new CodeUsing
                 {
@@ -38,6 +41,13 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
                         IsExternal = true
                     }
                 });
+            ConvertUnionTypesToWrapper(generatedCode,
+                _configuration.UsesBackingStore,
+                s => s.ToFirstCharacterLowerCase(),
+                true,
+                SerializationNamespaceName,
+                "ComposedTypeWrapper"
+            );
             var reservedNamesProvider = new JavaReservedNamesProvider();
             CorrectNames(generatedCode, s =>
             {
@@ -58,13 +68,6 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
                 GenerationLanguage.Java);
             cancellationToken.ThrowIfCancellationRequested();
             RemoveCancellationParameter(generatedCode);
-            ConvertUnionTypesToWrapper(generatedCode,
-                _configuration.UsesBackingStore,
-                s => s.ToFirstCharacterLowerCase(),
-                true,
-                SerializationNamespaceName,
-                "ComposedTypeWrapper"
-            );
             CorrectCoreType(generatedCode, CorrectMethodType, CorrectPropertyType, CorrectImplements);
             cancellationToken.ThrowIfCancellationRequested();
             ReplaceBinaryByNativeType(generatedCode, "InputStream", "java.io", true, true);
@@ -75,19 +78,30 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
                     CodePropertyKind.QueryParameter,
                     CodePropertyKind.RequestBuilder,
                 },
-                static s => s.ToCamelCase(UnderscoreArray).ToFirstCharacterLowerCase());
+                static s => s.ToCamelCase(UnderscoreArray));
             AddGetterAndSetterMethods(generatedCode,
                 new() {
                     CodePropertyKind.Custom,
-                    CodePropertyKind.AdditionalData,
-                    CodePropertyKind.BackingStore,
+                    CodePropertyKind.AdditionalData
                 },
-                static (_, s) => s.ToCamelCase(UnderscoreArray).ToFirstCharacterUpperCase(),
+                static (_, s) => s.ToPascalCase(UnderscoreArray),
                 _configuration.UsesBackingStore,
                 true,
                 "get",
                 "set",
                 string.Empty
+            );
+            AddGetterAndSetterMethods(generatedCode,
+                new() {
+                    CodePropertyKind.BackingStore
+                },
+                static (_, s) => s.ToPascalCase(UnderscoreArray),
+                _configuration.UsesBackingStore,
+                false,
+                "get",
+                "set",
+                string.Empty,
+                AccessModifier.Protected
             );
             ReplaceReservedNames(generatedCode, reservedNamesProvider, x => $"{x}Escaped", new HashSet<Type> { typeof(CodeEnumOption) });
             ReplaceReservedExceptionPropertyNames(generatedCode, new JavaExceptionsReservedNamesProvider(), x => $"{x}Escaped");
@@ -99,6 +113,7 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
             AddEnumSetImport(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             SetSetterParametersToNullable(generatedCode, new Tuple<CodeMethodKind, CodePropertyKind>(CodeMethodKind.Setter, CodePropertyKind.AdditionalData));
+            SetSetterParametersToNullable(generatedCode, new Tuple<CodeMethodKind, CodePropertyKind>(CodeMethodKind.Setter, CodePropertyKind.BackingStore));
             AddConstructorsForDefaultValues(generatedCode, true);
             CorrectCoreTypesForBackingStore(generatedCode, "BackingStoreFactorySingleton.instance.createBackingStore()");
             var defaultConfiguration = new GenerationConfiguration();
@@ -174,7 +189,7 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
                     Optional = false,
                     Documentation = new()
                     {
-                        Description = "Discriminator value from the payload",
+                        DescriptionTemplate = "Discriminator value from the payload",
                     },
                     Name = "discriminatorValue"
                 });
@@ -194,7 +209,7 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static void AddEnumSetImport(CodeElement currentElement)
     {
         if (currentElement is CodeClass currentClass && currentClass.IsOfKind(CodeClassKind.Model) &&
-            currentClass.Properties.Any(x => x.Type is CodeType xType && xType.TypeDefinition is CodeEnum xEnumType && xEnumType.Flags))
+            currentClass.Methods.Any(x => x.AccessedProperty?.Type is CodeType xType && xType.TypeDefinition is CodeEnum xEnumType && xEnumType.Flags))
         {
             var nUsing = new CodeUsing
             {
@@ -212,15 +227,15 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
     private static readonly AdditionalUsingEvaluator[] defaultUsingEvaluators = {
         new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.RequestAdapter),
             AbstractionsNamespaceName, "RequestAdapter"),
-        new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.PathParameters),
+        new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.PathParameters) || x is CodeMethod method && method.IsOfKind(CodeMethodKind.QueryParametersMapper),
             "java.util", "HashMap"),
         new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestGenerator),
             AbstractionsNamespaceName, "RequestInformation", "RequestOption", "HttpMethod"),
-        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestGenerator),
+        new (static x => x is CodeMethod method && (method.IsOfKind(CodeMethodKind.RequestGenerator) || method.IsOfKind(CodeMethodKind.QueryParametersMapper)),
             "java.util", "Collection", "Map"),
         new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.Model),
             SerializationNamespaceName, "Parsable"),
-        new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.Model) && @class.Properties.Any(x => x.IsOfKind(CodePropertyKind.AdditionalData)),
+        new (static x => x is CodeMethod @method && @method.IsOfKind(CodeMethodKind.Getter, CodeMethodKind.Setter) && (@method.AccessedProperty?.IsOfKind(CodePropertyKind.AdditionalData) ?? false),
             SerializationNamespaceName, "AdditionalDataHolder"),
         new (static x => x is CodeMethod method && method.Parameters.Any(x => !x.Optional),
                 "java.util", "Objects"),
@@ -245,10 +260,15 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
                 x is CodeMethod method && "decimal".Equals(method.ReturnType.Name, StringComparison.OrdinalIgnoreCase) ||
                 x is CodeParameter para && "decimal".Equals(para.Type.Name, StringComparison.OrdinalIgnoreCase),
             "java.math", "BigDecimal"),
-        new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.QueryParameter) && !string.IsNullOrEmpty(prop.SerializationName),
-                AbstractionsNamespaceName, "QueryParameter"),
+        new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.QueryParameters),
+                AbstractionsNamespaceName, "QueryParameters"),
         new (static x => x is CodeClass @class && @class.OriginalComposedType is CodeIntersectionType intersectionType && intersectionType.Types.Any(static y => !y.IsExternal),
             SerializationNamespaceName, "ParseNodeHelper"),
+        new (static x => x is CodeMethod @method && @method.IsOfKind(CodeMethodKind.Getter, CodeMethodKind.Setter) && @method.AccessedProperty != null && @method.AccessedProperty.IsOfKind(CodePropertyKind.Custom) && @method.AccessedProperty.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase),
+            SerializationNamespaceName, KiotaBuilder.UntypedNodeName),
+        new (static x => x is CodeMethod @method && @method.IsOfKind(CodeMethodKind.RequestExecutor) && (method.ReturnType.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase) ||
+                                                                                                        method.Parameters.Any(x => x.Kind is CodeParameterKind.RequestBody && x.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase))),
+            SerializationNamespaceName, KiotaBuilder.UntypedNodeName),
         new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestExecutor, CodeMethodKind.RequestGenerator) && method.Parameters.Any(static y => y.IsOfKind(CodeParameterKind.RequestBody) && y.Type.Name.Equals(MultipartBodyClassName, StringComparison.OrdinalIgnoreCase)),
             AbstractionsNamespaceName, MultipartBodyClassName)
     };
@@ -289,9 +309,14 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
             currentProperty.Type.IsNullable = true;
         }
         else if (currentProperty.IsOfKind(CodePropertyKind.BackingStore))
+        {
             currentProperty.Type.Name = currentProperty.Type.Name[1..]; // removing the "I"
+            currentProperty.Name = currentProperty.Name.ToFirstCharacterLowerCase();
+        }
         else if (currentProperty.IsOfKind(CodePropertyKind.QueryParameter))
+        {
             currentProperty.DefaultValue = $"new {currentProperty.Type.Name.ToFirstCharacterUpperCase()}()";
+        }
         else if (currentProperty.IsOfKind(CodePropertyKind.AdditionalData))
         {
             currentProperty.Type.Name = "Map<String, Object>";
@@ -322,7 +347,7 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
             {
                 x.Optional = false;
                 x.Type.IsNullable = true;
-                if (x.Type.Name.StartsWith("i", StringComparison.OrdinalIgnoreCase))
+                if (x.Type.Name.StartsWith('I'))
                     x.Type.Name = x.Type.Name[1..];
             });
         else if (currentMethod.IsOfKind(CodeMethodKind.Deserializer))
@@ -333,7 +358,7 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
         else if (currentMethod.IsOfKind(CodeMethodKind.ClientConstructor, CodeMethodKind.Constructor, CodeMethodKind.RawUrlConstructor))
         {
             currentMethod.Parameters.Where(x => x.IsOfKind(CodeParameterKind.RequestAdapter, CodeParameterKind.BackingStore))
-                .Where(x => x.Type.Name.StartsWith("I", StringComparison.OrdinalIgnoreCase))
+                .Where(x => x.Type.Name.StartsWith('I'))
                 .ToList()
                 .ForEach(x => x.Type.Name = x.Type.Name[1..]); // removing the "I"
             currentMethod.Parameters.Where(x => x.IsOfKind(CodeParameterKind.RequestAdapter, CodeParameterKind.PathParameters))
@@ -408,7 +433,7 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
                                     .Select(static x => GetMethodClone(x, CodeParameterKind.RequestConfiguration))
                                     .OfType<CodeMethod>()
                                     .ToArray();
-                if (executorMethodsToAdd.Any() || generatorMethodsToAdd.Any())
+                if (executorMethodsToAdd.Length != 0 || generatorMethodsToAdd.Length != 0)
                     currentClass.AddMethod(executorMethodsToAdd
                                             .Union(generatorMethodsToAdd)
                                             .ToArray());
@@ -448,9 +473,9 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
             }
             RemovePrefixFromRequestConfigParameters(currentClass, prefix);
         }
-        CrawlTree(currentElement, x => RemoveClassNamePrefixFromNestedClasses(x));
+        CrawlTree(currentElement, RemoveClassNamePrefixFromNestedClasses);
     }
-    private static void RemovePrefixFromQueryProperties(CodeElement currentElement, String prefix)
+    private static void RemovePrefixFromQueryProperties(CodeElement currentElement, string prefix)
     {
         if (currentElement is CodeClass currentClass)
         {
@@ -494,5 +519,36 @@ public class JavaRefiner : CommonLanguageRefiner, ILanguageRefiner
 
             CrawlTree(currentElement, LowerCaseNamespaceNames);
         }
+    }
+
+    private void AddQueryParameterExtractorMethod(CodeElement currentElement, string methodName = "toQueryParameters")
+    {
+        if (currentElement is CodeClass currentClass &&
+            currentClass.IsOfKind(CodeClassKind.QueryParameters))
+        {
+            currentClass.StartBlock.AddImplements(new CodeType
+            {
+                IsExternal = true,
+                Name = "QueryParameters"
+            });
+            currentClass.AddMethod(new CodeMethod
+            {
+                Name = methodName,
+                Access = AccessModifier.Public,
+                ReturnType = new CodeType
+                {
+                    Name = "Map<String, Object>",
+                    IsNullable = false,
+                },
+                IsAsync = false,
+                IsStatic = false,
+                Kind = CodeMethodKind.QueryParametersMapper,
+                Documentation = new()
+                {
+                    DescriptionTemplate = "Extracts the query parameters into a map for the URI template parsing.",
+                },
+            });
+        }
+        CrawlTree(currentElement, x => AddQueryParameterExtractorMethod(x, methodName));
     }
 }

@@ -2,7 +2,8 @@
 
 param(
     [Parameter(Mandatory = $true)][string]$descriptionUrl,
-    [Parameter(Mandatory = $true)][string]$language
+    [Parameter(Mandatory = $true)][string]$language,
+    [Parameter(Mandatory = $false)][string]$includeOutputParameter = $true
 )
 
 if ([string]::IsNullOrEmpty($descriptionUrl)) {
@@ -20,7 +21,10 @@ if ($language -eq "csharp") {
     $command = " --output `"./it/$language/client`" --namespace-name `"app.client`""
 }
 elseif ($language -eq "java") {
-    $command = " --output `"./it/$language/src`""
+    $command = " --output `"./it/$language/src/apisdk`""
+}
+elseif ($language -eq "dart") {
+    $command = " --output `"./it/$language/lib`""
 }
 elseif ($language -eq "go") {
     $command = " --output `"./it/$language/client`" --namespace-name `"integrationtest/client`""
@@ -36,6 +40,10 @@ elseif ($language -eq "php") {
 }
 elseif ($language -eq "python") {
     $command = " --output `"./it/$language/integration_test/client`" --namespace-name `"integration_test.client`""
+}
+
+if ($includeOutputParameter -eq $false) {
+    $command = "" # no output parameter to generate
 }
 
 $configPath = Join-Path -Path $PSScriptRoot -ChildPath "config.json"

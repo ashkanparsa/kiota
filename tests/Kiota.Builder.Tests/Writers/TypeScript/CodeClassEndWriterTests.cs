@@ -9,7 +9,7 @@ using Kiota.Builder.Writers.TypeScript;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.TypeScript;
-public class CodeClassEndWriterTests : IDisposable
+public sealed class CodeClassEndWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -45,16 +45,16 @@ public class CodeClassEndWriterTests : IDisposable
         codeElementWriter.WriteCodeElement(child.EndBlock, writer);
         var result = tw.ToString();
         Assert.Equal(1, result.Count(x => x == '}'));
-        Assert.DoesNotContain("// eslint-enable", result);
-        Assert.DoesNotContain("// tslint:enable", result);
+        Assert.DoesNotContain("/* eslint-enable */", result);
+        Assert.DoesNotContain("/* tslint:enable */", result);
     }
     [Fact]
     public void ClosesNonNestedClasses()
     {
         codeElementWriter.WriteCodeElement(parentClass.EndBlock, writer);
         var result = tw.ToString();
-        Assert.Contains("// eslint-enable", result);
-        Assert.Contains("// tslint:enable", result);
+        Assert.Contains("/* eslint-enable */", result);
+        Assert.Contains("/* tslint:enable */", result);
         Assert.Equal(1, result.Count(x => x == '}'));
     }
 }

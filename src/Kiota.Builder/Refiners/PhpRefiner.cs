@@ -14,12 +14,14 @@ public class PhpRefiner : CommonLanguageRefiner
     private static readonly CodeUsingDeclarationNameComparer usingComparer = new();
     public PhpRefiner(GenerationConfiguration configuration) : base(configuration) { }
 
+    private const string AbstractionsNamespaceName = @"Microsoft\Kiota\Abstractions";
 
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
             RemoveMethodByKind(generatedCode, CodeMethodKind.RawUrlConstructor);
+            DeduplicateErrorMappings(generatedCode);
             AddInnerClasses(generatedCode,
                 true,
                 string.Empty,
@@ -30,7 +32,7 @@ public class PhpRefiner : CommonLanguageRefiner
                     Name = "BaseRequestBuilder",
                     Declaration = new CodeType
                     {
-                        Name = "Microsoft\\Kiota\\Abstractions",
+                        Name = $@"{AbstractionsNamespaceName}",
                         IsExternal = true
                     }
                 }, AccessModifier.Public);
@@ -44,7 +46,10 @@ public class PhpRefiner : CommonLanguageRefiner
             ConvertUnionTypesToWrapper(generatedCode,
                 _configuration.UsesBackingStore,
                 static s => s,
-                false);
+                false,
+                $@"{AbstractionsNamespaceName}\Serialization",
+                "ComposedTypeWrapper"
+                );
             ReplaceReservedNames(generatedCode, new PhpReservedNamesProvider(), reservedWord => $"Escaped{reservedWord.ToFirstCharacterUpperCase()}", new HashSet<Type> { typeof(CodeEnumOption) });
             AddQueryParameterFactoryMethod(generatedCode);
             AddPrimaryErrorMessage(generatedCode, "getPrimaryErrorMessage", () => new CodeType { IsExternal = true, IsNullable = false, Name = "string" });
@@ -52,6 +57,7 @@ public class PhpRefiner : CommonLanguageRefiner
             AddParsableImplementsForModelClasses(generatedCode, "Parsable");
             AddRequestConfigurationConstructors(generatedCode);
             AddDefaultImports(generatedCode, defaultUsingEvaluators);
+            RemoveUntypedNodeTypeValues(generatedCode);
             AddCollectionValidationUtilImportToModels(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
             AddGetterAndSetterMethods(generatedCode,
@@ -60,7 +66,7 @@ public class PhpRefiner : CommonLanguageRefiner
                     CodePropertyKind.AdditionalData,
                     CodePropertyKind.BackingStore
                 },
-                static (_, s) => s.ToCamelCase(UnderscoreArray),
+                static (_, s) => s.ToPascalCase(UnderscoreArray),
                 _configuration.UsesBackingStore,
                 true,
                 "get",
@@ -69,7 +75,7 @@ public class PhpRefiner : CommonLanguageRefiner
             AddParentClassToErrorClasses(
                 generatedCode,
                 "ApiException",
-                "Microsoft\\Kiota\\Abstractions"
+                AbstractionsNamespaceName
             );
             MoveClassesWithNamespaceNamesUnderNamespace(generatedCode);
             AddConstructorsForDefaultValues(generatedCode, true);
@@ -89,16 +95,22 @@ public class PhpRefiner : CommonLanguageRefiner
                 defaultConfiguration.Serializers,
                 new(StringComparer.OrdinalIgnoreCase) {
                     "Microsoft\\Kiota\\Serialization\\Json\\JsonSerializationWriterFactory",
-                    "Microsoft\\Kiota\\Serialization\\Text\\TextSerializationWriterFactory"}
+                    "Microsoft\\Kiota\\Serialization\\Text\\TextSerializationWriterFactory",
+                    @"Microsoft\Kiota\Serialization\Form\FormSerializationWriterFactory",
+                    @"Microsoft\Kiota\Serialization\Multipart\MultipartSerializationWriterFactory"
+
+                }
             );
             ReplaceDefaultDeserializationModules(generatedCode,
                 defaultConfiguration.Deserializers,
                 new(StringComparer.OrdinalIgnoreCase) {
                     "Microsoft\\Kiota\\Serialization\\Json\\JsonParseNodeFactory",
-                    "Microsoft\\Kiota\\Serialization\\Text\\TextParseNodeFactory"}
+                    "Microsoft\\Kiota\\Serialization\\Text\\TextParseNodeFactory",
+                    @"Microsoft\Kiota\Serialization\Form\FormParseNodeFactory"
+                }
             );
             cancellationToken.ThrowIfCancellationRequested();
-            AddSerializationModulesImport(generatedCode, new[] { "Microsoft\\Kiota\\Abstractions\\ApiClientBuilder" }, null, '\\');
+            AddSerializationModulesImport(generatedCode, [$@"{AbstractionsNamespaceName}\ApiClientBuilder"], null, '\\');
             cancellationToken.ThrowIfCancellationRequested();
             AddPropertiesAndMethodTypesImports(generatedCode, true, false, true);
             CorrectBackingStoreSetterParam(generatedCode);
@@ -111,7 +123,7 @@ public class PhpRefiner : CommonLanguageRefiner
                     Name = "BaseRequestConfiguration",
                     Declaration = new CodeType
                     {
-                        Name = "Microsoft\\Kiota\\Abstractions",
+                        Name = AbstractionsNamespaceName,
                         IsExternal = true
                     }
                 });
@@ -124,7 +136,7 @@ public class PhpRefiner : CommonLanguageRefiner
                     CodePropertyKind.Custom,
                     CodePropertyKind.QueryParameter,
                 },
-                static s => s.ToCamelCase(UnderscoreArray).ToFirstCharacterLowerCase());
+                static s => s.ToCamelCase(UnderscoreArray));
         }, cancellationToken);
     }
     private static readonly Dictionary<string, (string, CodeUsing?)> DateTypesReplacements = new(StringComparer.OrdinalIgnoreCase)
@@ -135,7 +147,7 @@ public class PhpRefiner : CommonLanguageRefiner
                 Name = "Date",
                 Declaration = new CodeType
                 {
-                    Name = "Microsoft\\Kiota\\Abstractions\\Types",
+                    Name = $@"{AbstractionsNamespaceName}\Types",
                     IsExternal = true,
                 },
             })
@@ -146,7 +158,7 @@ public class PhpRefiner : CommonLanguageRefiner
                 Name = "Time",
                 Declaration = new CodeType
                 {
-                    Name = "Microsoft\\Kiota\\Abstractions\\Types",
+                    Name = $@"{AbstractionsNamespaceName}\Types",
                     IsExternal = true,
                 },
             })
@@ -175,34 +187,39 @@ public class PhpRefiner : CommonLanguageRefiner
         }
     };
     private static readonly AdditionalUsingEvaluator[] defaultUsingEvaluators = {
-        new (x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.RequestAdapter),
-            "Microsoft\\Kiota\\Abstractions", "RequestAdapter"),
-        new (x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestGenerator),
-            "Microsoft\\Kiota\\Abstractions", "HttpMethod", "RequestInformation"),
+        new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.RequestAdapter),
+            AbstractionsNamespaceName, "RequestAdapter"),
+        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestGenerator),
+            AbstractionsNamespaceName, "HttpMethod", "RequestInformation"),
         new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.Model) && @class.Properties.Any(static y => y.IsOfKind(CodePropertyKind.AdditionalData)),
-            "Microsoft\\Kiota\\Abstractions\\Serialization", "AdditionalDataHolder"),
-        new (x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.Serializer),
-            "Microsoft\\Kiota\\Abstractions\\Serialization", "SerializationWriter"),
-        new (x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.Deserializer),
-            "Microsoft\\Kiota\\Abstractions\\Serialization", "ParseNode"),
-        new (x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.Model),
-            "Microsoft\\Kiota\\Abstractions\\Serialization", "Parsable"),
-        new (x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.ClientConstructor) &&
+            $@"{AbstractionsNamespaceName}\Serialization", "AdditionalDataHolder"),
+        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.Serializer),
+            $@"{AbstractionsNamespaceName}\Serialization", "SerializationWriter"),
+        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.Deserializer),
+            $@"{AbstractionsNamespaceName}\Serialization", "ParseNode"),
+        new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.Model),
+            $@"{AbstractionsNamespaceName}\Serialization", "Parsable"),
+        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.ClientConstructor) &&
                     method.Parameters.Any(y => y.IsOfKind(CodeParameterKind.BackingStore)),
-            "Microsoft\\Kiota\\Abstractions\\Store", "BackingStoreFactory", "BackingStoreFactorySingleton"),
-        new (x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.BackingStore),
-            "Microsoft\\Kiota\\Abstractions\\Store", "BackingStore", "BackedModel", "BackingStoreFactorySingleton" ),
-        new (x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestExecutor), "Http\\Promise", "Promise"),
-        new (x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestExecutor), "", "Exception"),
-        new (x => x is CodeEnum, "Microsoft\\Kiota\\Abstractions\\", "Enum"),
+            $@"{AbstractionsNamespaceName}\Store", "BackingStoreFactory", "BackingStoreFactorySingleton"),
+        new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.BackingStore),
+            $@"{AbstractionsNamespaceName}\Store", "BackingStore", "BackedModel", "BackingStoreFactorySingleton" ),
+        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestExecutor), "Http\\Promise", "Promise"),
+        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestExecutor), "", "Exception"),
+        new (static x => x is CodeEnum, AbstractionsNamespaceName, "Enum"),
         new(static x => x is CodeProperty {Type.Name: {}} property && property.Type.Name.Equals("DateTime", StringComparison.OrdinalIgnoreCase), "", "\\DateTime"),
         new(static x => x is CodeProperty {Type.Name: {}} property && property.Type.Name.Equals("DateTimeOffset", StringComparison.OrdinalIgnoreCase), "", "\\DateTime"),
-        new(x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.ClientConstructor), "Microsoft\\Kiota\\Abstractions", "ApiClientBuilder"),
-        new(x => x is CodeProperty property && property.IsOfKind(CodePropertyKind.QueryParameter) && !string.IsNullOrEmpty(property.SerializationName), "Microsoft\\Kiota\\Abstractions", "QueryParameter"),
-        new(x => x is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.RequestConfiguration), "Microsoft\\Kiota\\Abstractions", "RequestOption"),
+        new(static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.ClientConstructor), AbstractionsNamespaceName, "ApiClientBuilder"),
+        new(static x => x is CodeProperty property && property.IsOfKind(CodePropertyKind.QueryParameter) && !string.IsNullOrEmpty(property.SerializationName), AbstractionsNamespaceName, "QueryParameter"),
+        new(static x => x is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.RequestConfiguration), AbstractionsNamespaceName, "RequestOption"),
         new (static x => x is CodeClass { OriginalComposedType: CodeIntersectionType intersectionType } && intersectionType.Types.Any(static y => !y.IsExternal),
-            "Microsoft\\Kiota\\Abstractions\\Serialization", "ParseNodeHelper"),
+            $@"{AbstractionsNamespaceName}\Serialization", "ParseNodeHelper"),
+        new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestExecutor, CodeMethodKind.RequestGenerator) && method.Parameters.Any(static y => y.IsOfKind(CodeParameterKind.RequestBody) && y.Type.Name.Equals(MultipartBodyClassName, StringComparison.OrdinalIgnoreCase)),
+            AbstractionsNamespaceName, MultipartBodyClassName)
     };
+
+    private const string MultipartBodyClassName = "MultiPartBody";
+
     private static void CorrectPropertyType(CodeProperty currentProperty)
     {
         if (currentProperty.IsOfKind(CodePropertyKind.RequestAdapter))
@@ -266,7 +283,7 @@ public class PhpRefiner : CommonLanguageRefiner
                 if (x.IsOfKind(CodeParameterKind.ParseNode))
                     x.Type.Name = "ParseNode";
                 else
-                    x.Documentation.Description += " or a String representing the raw URL.";
+                    x.Documentation.DescriptionTemplate += " or a String representing the raw URL.";
             });
             currentMethod.Parameters.Where(x => x.IsOfKind(CodeParameterKind.BackingStore)
                                                 && currentMethod.IsOfKind(CodeMethodKind.ClientConstructor)).ToList().ForEach(static x =>
@@ -274,6 +291,11 @@ public class PhpRefiner : CommonLanguageRefiner
                 x.Type.Name = "BackingStoreFactory";
                 x.DefaultValue = "null";
             });
+            currentMethod.Parameters.Where(x => x.Type.Name.Equals("MultipartBody", StringComparison.OrdinalIgnoreCase))
+                .ToList().ForEach(static y =>
+                {
+                    y.Type.Name = "MultiPartBody";
+                });
         }
         CrawlTree(codeElement, CorrectParameterType);
     }
@@ -301,7 +323,7 @@ public class PhpRefiner : CommonLanguageRefiner
             foreach (var usingElement in duplicatedSymbolsUsings)
             {
                 var replacement = string.Join("\\", usingElement.Declaration!.TypeDefinition!.GetImmediateParentOfType<CodeNamespace>().Name
-                    .Split(new[] { '\\', '.' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Split(importPathSeparators, StringSplitOptions.RemoveEmptyEntries)
                     .Select(x => x.ToFirstCharacterUpperCase())
                     .ToArray());
                 usingElement.Alias = $"{(string.IsNullOrEmpty(replacement) ? string.Empty : $"\\{replacement}")}\\{usingElement.Declaration!.TypeDefinition!.Name.ToFirstCharacterUpperCase()}";
@@ -321,7 +343,7 @@ public class PhpRefiner : CommonLanguageRefiner
     {
         if (codeElement is CodeClass codeClass && codeClass.Kind == CodeClassKind.Model)
         {
-            var typeUtilsUsing = new CodeUsing { Name = "TypeUtils", Declaration = new CodeType { Name = "Microsoft\\Kiota\\Abstractions\\Types", IsExternal = true } };
+            var typeUtilsUsing = new CodeUsing { Name = "TypeUtils", Declaration = new CodeType { Name = $@"{AbstractionsNamespaceName}\Types", IsExternal = true } };
             if (codeClass.Properties.Any(x =>
                     x.Kind == CodePropertyKind.Custom
                     && x.Type is CodeType codeType
@@ -340,6 +362,8 @@ public class PhpRefiner : CommonLanguageRefiner
         { CodePropertyKind.Options, CodeParameterKind.Options },
         { CodePropertyKind.QueryParameters, CodeParameterKind.QueryParameter },
     };
+    private static readonly char[] importPathSeparators = ['\\', '.'];
+
     private static void AddRequestConfigurationConstructors(CodeElement codeElement)
     {
         if (codeElement is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.RequestConfiguration, CodeClassKind.QueryParameters))
@@ -352,9 +376,11 @@ public class PhpRefiner : CommonLanguageRefiner
                     Name = "constructor",
                     Kind = CodeMethodKind.Constructor,
                     IsAsync = false,
-                    Documentation = new()
+                    Documentation = new(new() {
+                        { "TypeName", new CodeType { TypeDefinition = codeClass, IsExternal = false }}
+                    })
                     {
-                        Description = $"Instantiates a new {codeClass.Name} and sets the default values.",
+                        DescriptionTemplate = "Instantiates a new {TypeName} and sets the default values.",
                     },
                     ReturnType = new CodeType { Name = "void" },
                 };
@@ -391,7 +417,7 @@ public class PhpRefiner : CommonLanguageRefiner
                         Type = x.Type
                     })
                     .ToArray();
-                if (constructorParams.Any())
+                if (constructorParams.Length != 0)
                 {
                     constructor.AddParameter(constructorParams);
                 }
@@ -407,17 +433,20 @@ public class PhpRefiner : CommonLanguageRefiner
             var queryParameterProperty = codeClass.GetPropertyOfKind(CodePropertyKind.QueryParameters);
             if (queryParameterProperty != null)
             {
+                var returnTypeCodeType = queryParameterProperty.Type as CodeType;
                 var queryParamFactoryMethod = new CodeMethod
                 {
                     Name = "createQueryParameters",
                     IsStatic = true,
                     Access = AccessModifier.Public,
                     Kind = CodeMethodKind.Factory,
-                    Documentation = new CodeDocumentation
+                    Documentation = new(new() {
+                        { "TypeName", queryParameterProperty.Type }
+                    })
                     {
-                        Description = $"Instantiates a new {queryParameterProperty.Type.Name}."
+                        DescriptionTemplate = "Instantiates a new {TypeName}."
                     },
-                    ReturnType = new CodeType { Name = queryParameterProperty.Type.Name, TypeDefinition = queryParameterProperty.Type, IsNullable = false }
+                    ReturnType = new CodeType { Name = queryParameterProperty.Type.Name, TypeDefinition = returnTypeCodeType?.TypeDefinition ?? queryParameterProperty.Type, IsNullable = false }
                 };
                 if (queryParameterProperty.Type is CodeType codeType && codeType.TypeDefinition is CodeClass queryParamsClass)
                 {
@@ -431,7 +460,7 @@ public class PhpRefiner : CommonLanguageRefiner
                                             Optional = true,
                                             Type = (CodeTypeBase)x.Type.Clone()
                                         }).ToArray();
-                    if (properties.Any())
+                    if (properties.Length != 0)
                     {
                         queryParamFactoryMethod.AddParameter(properties);
                     }

@@ -11,7 +11,7 @@ using Kiota.Builder.Writers.Php;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Php;
-public class CodeEnumWriterTests : IDisposable
+public sealed class CodeEnumWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -39,12 +39,12 @@ public class CodeEnumWriterTests : IDisposable
         GC.SuppressFinalize(this);
     }
     [Fact]
-    public async Task WritesEnum()
+    public async Task WritesEnumAsync()
     {
         var declaration = currentEnum.Parent as CodeNamespace;
         const string optionName = "option1";
         currentEnum.AddOption(new CodeEnumOption { Name = optionName });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, declaration);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, declaration);
         _codeEnumWriter.WriteCodeElement(currentEnum, writer);
         var result = tw.ToString();
         Assert.Contains("<?php", result);
@@ -52,7 +52,7 @@ public class CodeEnumWriterTests : IDisposable
         Assert.Contains("use Microsoft\\Kiota\\Abstractions\\Enum", result);
         Assert.Contains("class", result);
         Assert.Contains("extends Enum", result);
-        Assert.Contains($"public const {optionName.ToUpperInvariant()} = '{optionName}'", result);
+        Assert.Contains($"public const {optionName.ToUpperInvariant()} = \"{optionName}\"", result);
         AssertExtensions.CurlyBracesAreClosed(result, 1);
         Assert.Contains(optionName, result);
     }

@@ -7,7 +7,7 @@ using Kiota.Builder.Writers;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Java;
-public class CodePropertyWriterTests : IDisposable
+public sealed class CodePropertyWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -103,15 +103,6 @@ public class CodePropertyWriterTests : IDisposable
         writer.Write(property);
         var result = tw.ToString();
         Assert.Contains("@jakarta.annotation.Nonnull", result);
-    }
-    [Fact]
-    public void WritesSerializationAnnotation()
-    {
-        property.Kind = CodePropertyKind.QueryParameter;
-        property.SerializationName = "someserializationname";
-        writer.Write(property);
-        var result = tw.ToString();
-        Assert.Contains("@QueryParameter(name = \"someserializationname\")", result);
     }
     [Fact]
     public void WritesCollectionFlagEnumsAsOneDimensionalArray()

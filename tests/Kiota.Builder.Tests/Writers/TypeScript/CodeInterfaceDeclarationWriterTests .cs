@@ -1,10 +1,11 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using Kiota.Builder.CodeDOM;
 using Xunit;
 
 namespace Kiota.Builder.Writers.TypeScript.Tests;
-public class CodeInterfaceDeclaraterWriterTests : IDisposable
+public sealed class CodeInterfaceDeclaraterWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -19,9 +20,11 @@ public class CodeInterfaceDeclaraterWriterTests : IDisposable
         writer.SetTextWriter(tw);
         var root = CodeNamespace.InitRootNamespace();
         var ns = root.AddNamespace("graphtests.models");
+        var originalClass = ns.AddClass(new CodeClass() { Name = "originalParentClass" }).First();
         parentInterface = new CodeInterface()
         {
-            Name = "parent"
+            Name = "parent",
+            OriginalClass = originalClass
         };
         ns.AddInterface(parentInterface);
     }
@@ -35,8 +38,8 @@ public class CodeInterfaceDeclaraterWriterTests : IDisposable
     {
         writer.Write(parentInterface.StartBlock);
         var result = tw.ToString();
-        Assert.Contains("// eslint-disable", result);
-        Assert.Contains("// tslint:disable", result);
+        Assert.Contains("/* eslint-disable */", result);
+        Assert.Contains("/* tslint:disable */", result);
     }
     [Fact]
     public void WritesSimpleDeclaration()

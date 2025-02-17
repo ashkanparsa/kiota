@@ -19,7 +19,7 @@ public class CodeRenderer
     {
         ArgumentNullException.ThrowIfNull(configuration);
         Configuration = configuration;
-        _rendererElementComparer = elementComparer ?? (configuration.ShouldRenderMethodsOutsideOfClasses ? new CodeElementOrderComparerWithExternalMethods() : new CodeElementOrderComparer());
+        _rendererElementComparer = elementComparer ?? new CodeElementOrderComparer();
     }
     public async Task RenderCodeNamespaceToSingleFileAsync(LanguageWriter writer, CodeElement codeElement, string outputFile, CancellationToken cancellationToken)
     {
@@ -34,7 +34,7 @@ public class CodeRenderer
         writer.SetTextWriter(sw);
         RenderCode(writer, codeElement);
         if (!cancellationToken.IsCancellationRequested)
-            await sw.FlushAsync().ConfigureAwait(false); // stream writer doesn't not have a cancellation token overload https://github.com/dotnet/runtime/issues/64340
+            await sw.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
     // We created barrels for code namespaces. Skipping for empty namespaces, ones created for users, and ones with same namespace as class name.
     public async Task RenderCodeNamespaceToFilePerClassAsync(LanguageWriter writer, CodeNamespace currentNamespace, CancellationToken cancellationToken)
@@ -55,13 +55,13 @@ public class CodeRenderer
                         await RenderCodeNamespaceToSingleFileAsync(writer, codeElement, path, cancellationToken).ConfigureAwait(false);
                     break;
                 case CodeNamespace codeNamespace:
-                    await RenderBarrel(writer, currentNamespace, codeNamespace, cancellationToken).ConfigureAwait(false);
+                    await RenderBarrelAsync(writer, currentNamespace, codeNamespace, cancellationToken).ConfigureAwait(false);
                     await RenderCodeNamespaceToFilePerClassAsync(writer, codeNamespace, cancellationToken).ConfigureAwait(false);
                     break;
             }
         }
     }
-    private async Task RenderBarrel(LanguageWriter writer, CodeNamespace parentNamespace, CodeNamespace codeNamespace, CancellationToken cancellationToken)
+    private async Task RenderBarrelAsync(LanguageWriter writer, CodeNamespace parentNamespace, CodeNamespace codeNamespace, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrEmpty(codeNamespace.Name) &&
             Configuration.ShouldWriteNamespaceIndices &&
@@ -104,7 +104,8 @@ public class CodeRenderer
         return config.Language switch
         {
             GenerationLanguage.TypeScript => new TypeScriptCodeRenderer(config),
-            GenerationLanguage.Python => new PythonCodeRenderer(config),
+            GenerationLanguage.Python => new CodeRenderer(config, new CodeElementOrderComparerPython()),
+            GenerationLanguage.Go => new CodeRenderer(config, new CodeElementOrderComparerWithExternalMethods()),
             _ => new CodeRenderer(config),
         };
     }

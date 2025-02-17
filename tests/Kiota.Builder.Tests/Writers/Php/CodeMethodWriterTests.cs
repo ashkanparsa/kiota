@@ -14,7 +14,7 @@ using Kiota.Builder.Writers.Php;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Php;
-public class CodeMethodWriterTests : IDisposable
+public sealed class CodeMethodWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -79,7 +79,7 @@ public class CodeMethodWriterTests : IDisposable
             IsAsync = true,
             Documentation = new()
             {
-                Description = "This is a very good method to try all the good things",
+                DescriptionTemplate = "This is a very good method to try all the good things",
             },
             ReturnType = new CodeType
             {
@@ -100,7 +100,7 @@ public class CodeMethodWriterTests : IDisposable
                 DefaultValue = "https://graph.microsoft.com/v1.0/",
                 Documentation = new()
                 {
-                    Description = "The URL template",
+                    DescriptionTemplate = "The URL template",
                 },
                 Kind = CodePropertyKind.UrlTemplate,
                 Type = new CodeType { Name = "string" }
@@ -112,7 +112,7 @@ public class CodeMethodWriterTests : IDisposable
                 DefaultValue = "[]",
                 Documentation = new()
                 {
-                    Description = "The Path parameters.",
+                    DescriptionTemplate = "The Path parameters.",
                 },
                 Kind = CodePropertyKind.PathParameters,
                 Type = new CodeType { Name = "array" }
@@ -123,7 +123,7 @@ public class CodeMethodWriterTests : IDisposable
                 Access = AccessModifier.Protected,
                 Documentation = new()
                 {
-                    Description = "The request Adapter",
+                    DescriptionTemplate = "The request Adapter",
                 },
                 Kind = CodePropertyKind.RequestAdapter,
                 Type = new CodeType
@@ -213,7 +213,7 @@ public class CodeMethodWriterTests : IDisposable
     public void WriteMethodWithNoDescription()
     {
         setup();
-        method.Documentation.Description = string.Empty;
+        method.Documentation.DescriptionTemplate = string.Empty;
         _codeMethodWriter.WriteCodeElement(method, languageWriter);
         var result = stringWriter.ToString();
 
@@ -227,7 +227,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WriteRequestExecutor()
+    public async Task WriteRequestExecutorAsync()
     {
         setup();
         CodeProperty[] properties =
@@ -248,7 +248,7 @@ public class CodeMethodWriterTests : IDisposable
             },
             Documentation = new()
             {
-                Description = "This will send a POST request",
+                DescriptionTemplate = "This will send a POST request",
                 DocumentationLink = new Uri("https://learn.microsoft.com/"),
                 DocumentationLabel = "Learning"
             },
@@ -281,7 +281,7 @@ public class CodeMethodWriterTests : IDisposable
         codeMethod.AddErrorMapping("4XX", new CodeType { Name = "Error4XX", TypeDefinition = error4XX });
         codeMethod.AddErrorMapping("5XX", new CodeType { Name = "Error5XX", TypeDefinition = error5XX });
         codeMethod.AddErrorMapping("401", new CodeType { Name = "Error401", TypeDefinition = error401 });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
         _codeMethodWriter.WriteCodeElement(codeMethod, languageWriter);
         var result = stringWriter.ToString();
 
@@ -294,7 +294,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteErrorMessageOverride()
+    public async Task WriteErrorMessageOverrideAsync()
     {
         setup();
         var error401 = root.AddClass(new CodeClass
@@ -312,14 +312,14 @@ public class CodeMethodWriterTests : IDisposable
             SimpleName = "getPrimaryErrorMessage",
         };
         error401.AddMethod(codeMethod);
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
         _codeMethodWriter.WriteCodeElement(codeMethod, languageWriter);
         var result = stringWriter.ToString();
 
         Assert.Contains("return $primaryError->getMessage() ?? '';", result);
     }
     [Fact]
-    public async void WritesRequestExecutorForEnumTypes()
+    public async Task WritesRequestExecutorForEnumTypesAsync()
     {
         setup();
         CodeProperty[] properties =
@@ -342,7 +342,7 @@ public class CodeMethodWriterTests : IDisposable
             },
             Documentation = new()
             {
-                Description = "This will send a POST request",
+                DescriptionTemplate = "This will send a POST request",
                 DocumentationLink = new Uri("https://learn.microsoft.com/"),
                 DocumentationLabel = "Learning"
             },
@@ -375,7 +375,7 @@ public class CodeMethodWriterTests : IDisposable
         codeMethod.AddErrorMapping("4XX", new CodeType { Name = "Error4XX", TypeDefinition = error4XX });
         codeMethod.AddErrorMapping("5XX", new CodeType { Name = "Error5XX", TypeDefinition = error5XX });
         codeMethod.AddErrorMapping("401", new CodeType { Name = "Error401", TypeDefinition = error401 });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
         _codeMethodWriter.WriteCodeElement(codeMethod, languageWriter);
         var result = stringWriter.ToString();
 
@@ -410,7 +410,7 @@ public class CodeMethodWriterTests : IDisposable
             {
                 Name = "Status",
                 Documentation = new() {
-                    Description = "Status Enum",
+                    DescriptionTemplate = "Status Enum",
                 },
             }}, Access = AccessModifier.Private },
             "$writer->writeEnumValue('status', $this->getStatus());"
@@ -421,7 +421,7 @@ public class CodeMethodWriterTests : IDisposable
             {
                 Name = "Architecture", CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array, TypeDefinition = new CodeEnum { Name = "Architecture",
                 Documentation = new() {
-                    Description = "Arch Enum, accepts x64, x86, hybrid"
+                    DescriptionTemplate = "Arch Enum, accepts x64, x86, hybrid"
                 },
                 }
             }, Access = AccessModifier.Private, Kind = CodePropertyKind.Custom },
@@ -457,7 +457,7 @@ public class CodeMethodWriterTests : IDisposable
 
     [Theory]
     [MemberData(nameof(SerializerProperties))]
-    public async void WriteSerializer(CodeProperty property, string expected)
+    public async Task WriteSerializerAsync(CodeProperty property, string expected)
     {
         setup(true);
         var codeMethod = new CodeMethod
@@ -491,7 +491,7 @@ public class CodeMethodWriterTests : IDisposable
                 break;
         }
         parentClass.Kind = CodeClassKind.Model;
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
         _codeMethodWriter.WriteCodeElement(codeMethod, languageWriter);
         var result = stringWriter.ToString();
         Assert.Contains("public function serialize(SerializationWriter $writer)", result);
@@ -605,12 +605,33 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains(
             "public function createPostRequestInformation(Message $body, ?RequestConfig $requestConfiguration = null): RequestInformation",
             result);
+        Assert.Contains("$requestInfo->urlTemplate = $this->urlTemplate;", result);
         Assert.Contains("if ($requestConfiguration !== null", result);
         Assert.Contains("$requestInfo->addHeaders($requestConfiguration->h);", result);
         Assert.Contains("$requestInfo->setQueryParameters($requestConfiguration->q);", result);
         Assert.Contains("$requestInfo->addRequestOptions(...$requestConfiguration->o);", result);
         Assert.Contains("$requestInfo->setContentFromParsable($this->requestAdapter, \"\", $body);", result);
         Assert.Contains("return $requestInfo;", result);
+    }
+    [Fact]
+    public void WritesRequestGeneratorBodyWhenUrlTemplateIsOverrode()
+    {
+        setup();
+        parentClass.Kind = CodeClassKind.RequestBuilder;
+        method.Name = "createPostRequestInformation";
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.ReturnType = new CodeType()
+        {
+            Name = "RequestInformation",
+            IsNullable = false
+        };
+        method.HttpMethod = HttpMethod.Post;
+        AddRequestProperties();
+        AddRequestBodyParameters();
+        method.UrlTemplateOverride = "{baseurl+}/foo/bar";
+        _codeMethodWriter.WriteCodeElement(method, languageWriter);
+        var result = stringWriter.ToString();
+        Assert.Contains("$requestInfo->urlTemplate = '{baseurl+}/foo/bar';", result);
     }
 
     [Fact]
@@ -699,7 +720,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteIndexerBody()
+    public async Task WriteIndexerBodyAsync()
     {
         setup();
         parentClass.AddProperty(
@@ -736,7 +757,7 @@ public class CodeMethodWriterTests : IDisposable
             Kind = CodeMethodKind.IndexerBackwardCompatibility,
             Documentation = new()
             {
-                Description = "Get messages by a specific ID.",
+                DescriptionTemplate = "Get messages by a specific ID.",
             },
             OriginalIndexer = new CodeIndexer
             {
@@ -790,7 +811,7 @@ public class CodeMethodWriterTests : IDisposable
 
         parentClass.AddMethod(codeMethod);
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
         languageWriter.Write(codeMethod);
         var result = stringWriter.ToString();
 
@@ -838,7 +859,7 @@ public class CodeMethodWriterTests : IDisposable
                 {
                     Name = "EmailAddress", Kind = CodeClassKind.Model,
                     Documentation = new() {
-                        Description = "Email",
+                        DescriptionTemplate = "Email",
                     }, Parent = GetParentClassInStaticContext()
                 }, CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array }, Access = AccessModifier.Private},
             "'users' => fn(ParseNode $n) => $o->setUsers($n->getCollectionOfObjectValues([EmailAddress::class, 'createFromDiscriminatorValue'])),"
@@ -863,7 +884,7 @@ public class CodeMethodWriterTests : IDisposable
 
     [Theory]
     [MemberData(nameof(DeserializerProperties))]
-    public async Task WriteDeserializer(CodeProperty property, params string[] expected)
+    public async Task WriteDeserializerAsync(CodeProperty property, params string[] expected)
     {
         setup(true);
         parentClass.Kind = CodeClassKind.Model;
@@ -873,7 +894,7 @@ public class CodeMethodWriterTests : IDisposable
             Kind = CodeMethodKind.Deserializer,
             Documentation = new()
             {
-                Description = "Just some random method",
+                DescriptionTemplate = "Just some random method",
             },
             ReturnType = new CodeType
             {
@@ -893,7 +914,7 @@ public class CodeMethodWriterTests : IDisposable
         });
         parentClass.AddMethod(deserializerMethod);
         parentClass.AddProperty(property);
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
         languageWriter.Write(deserializerMethod);
         foreach (var assertion in expected)
         {
@@ -1013,7 +1034,7 @@ public class CodeMethodWriterTests : IDisposable
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
-    public async Task WriteDeserializerMergeWhenHasParent()
+    public async Task WriteDeserializerMergeWhenHasParentAsync()
     {
         setup();
         var cls = new CodeClass
@@ -1049,7 +1070,7 @@ public class CodeMethodWriterTests : IDisposable
             Kind = CodeMethodKind.Deserializer,
             Documentation = new()
             {
-                Description = "Just some random method",
+                DescriptionTemplate = "Just some random method",
             },
             ReturnType = new CodeType
             {
@@ -1060,14 +1081,14 @@ public class CodeMethodWriterTests : IDisposable
         };
         currentClass.AddMethod(deserializerMethod);
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
         _codeMethodWriter.WriteCodeElement(deserializerMethod, languageWriter);
         var result = stringWriter.ToString();
         Assert.Contains("array_merge(parent::getFieldDeserializers()", result);
     }
 
     [Fact]
-    public async void WriteConstructorBody()
+    public async Task WriteConstructorBodyAsync()
     {
         setup();
         parentClass.Kind = CodeClassKind.Model;
@@ -1077,7 +1098,7 @@ public class CodeMethodWriterTests : IDisposable
             Access = AccessModifier.Public,
             Documentation = new()
             {
-                Description = "The constructor for this class",
+                DescriptionTemplate = "The constructor for this class",
             },
             ReturnType = new CodeType { Name = "void" },
             Kind = CodeMethodKind.Constructor
@@ -1104,14 +1125,41 @@ public class CodeMethodWriterTests : IDisposable
             Type = new CodeType { Name = "countryCode", TypeDefinition = countryCode }
         };
         parentClass.AddProperty(propWithDefaultValue, enumProp);
-
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
+        var defaultValueNull = "\"null\"";
+        var nullPropName = "propWithDefaultNullValue";
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = nullPropName,
+            DefaultValue = defaultValueNull,
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType
+            {
+                Name = "int",
+                IsNullable = true
+            }
+        });
+        var defaultValueBool = "\"true\"";
+        var boolPropName = "propWithDefaultBoolValue";
+        parentClass.AddProperty(new CodeProperty
+        {
+            Name = boolPropName,
+            DefaultValue = defaultValueBool,
+            Kind = CodePropertyKind.Custom,
+            Type = new CodeType
+            {
+                Name = "boolean",
+                IsNullable = true
+            }
+        });
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
         _codeMethodWriter.WriteCodeElement(constructor, languageWriter);
         var result = stringWriter.ToString();
 
         Assert.Contains("public function __construct", result);
         Assert.Contains("$this->setType('#microsoft.graph.entity')", result);
         Assert.Contains("$this->setCountryCode(new CountryCode('+254'));", result);
+        Assert.Contains("$this->setPropWithDefaultNullValue(null)", result);
+        Assert.Contains("$this->setPropWithDefaultBoolValue(true)", result);
     }
     [Fact]
     public void DoesNotWriteConstructorWithDefaultFromComposedType()
@@ -1165,7 +1213,7 @@ public class CodeMethodWriterTests : IDisposable
             Name = "getEmailAddress",
             Documentation = new()
             {
-                Description = "This method gets the emailAddress",
+                DescriptionTemplate = "This method gets the emailAddress",
             },
             ReturnType = new CodeType
             {
@@ -1193,7 +1241,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WriteGetterAdditionalData()
+    public async Task WriteGetterAdditionalDataAsync()
     {
         setup();
         var property = new CodeProperty
@@ -1208,7 +1256,7 @@ public class CodeMethodWriterTests : IDisposable
         };
         parentClass.AddProperty(property);
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, root);
         var getter = parentClass.GetMethodsOffKind(CodeMethodKind.Getter)
             .First(x => x.AccessedProperty != null && x.AccessedProperty.IsOfKind(CodePropertyKind.AdditionalData));
         _codeMethodWriter.WriteCodeElement(getter, languageWriter);
@@ -1291,7 +1339,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WriteRequestBuilderConstructor()
+    public async Task WriteRequestBuilderConstructorAsync()
     {
         setup();
         method.Kind = CodeMethodKind.Constructor;
@@ -1358,7 +1406,7 @@ public class CodeMethodWriterTests : IDisposable
             }
         });
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         languageWriter.Write(method);
         var result = stringWriter.ToString();
         Assert.Contains("__construct", result);
@@ -1426,9 +1474,11 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("if ('#kiota.complexType1' === $mappingValue) {", result);
         Assert.Contains("$result->setComplexType1Value(new ComplexType1())", result);
         Assert.Contains("if ($parseNode->getStringValue() !== null) {", result);
-        Assert.Contains("$result->setStringValue($parseNode->getStringValue())", result);
+        Assert.Contains("$finalValue = $parseNode->getStringValue()", result);
+        Assert.Contains("$result->setStringValue($finalValue)", result);
         Assert.Contains("else if ($parseNode->getCollectionOfObjectValues([ComplexType2::class, 'createFromDiscriminatorValue']) !== null) {", result);
-        Assert.Contains("$result->setComplexType2Value($parseNode->getCollectionOfObjectValues([ComplexType2::class, 'createFromDiscriminatorValue']))", result);
+        Assert.Contains("$finalValue = $parseNode->getCollectionOfObjectValues([ComplexType2::class, 'createFromDiscriminatorValue'])", result);
+        Assert.Contains("$result->setComplexType2Value($finalValue)", result);
         Assert.Contains("return $result", result);
         Assert.DoesNotContain("return new UnionTypeWrapper()", result);
         AssertExtensions.Before("$parseNode->getStringValue()", "getCollectionOfObjectValues([ComplexType2::class, 'createFromDiscriminatorValue'])", result);
@@ -1439,7 +1489,7 @@ public class CodeMethodWriterTests : IDisposable
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]
-    public void WritesModelFactoryBodyForIntersectionModels()
+    public async Task WritesModelFactoryBodyForIntersectionModelsAsync()
     {
         setup();
         var wrapper = AddIntersectionTypeWrapper();
@@ -1464,7 +1514,7 @@ public class CodeMethodWriterTests : IDisposable
                 Name = "ParseNode"
             }
         });
-        _refiner.Refine(root, new CancellationToken(false));
+        await _refiner.RefineAsync(root, new CancellationToken(false));
         languageWriter.Write(factoryMethod);
         var result = stringWriter.ToString();
         Assert.DoesNotContain("$mappingValueNode = $parseNode->getChildNode(\"@odata.type\")", result);
@@ -1488,7 +1538,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WriteFactoryMethod()
+    public async Task WriteFactoryMethodAsync()
     {
         setup();
         var parentModel = root.AddClass(new CodeClass
@@ -1538,14 +1588,14 @@ public class CodeMethodWriterTests : IDisposable
             },
             Optional = false,
         });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
         languageWriter.Write(factoryMethod);
         var result = stringWriter.ToString();
         Assert.Contains("case 'childModel': return new ChildModel();", result);
         Assert.Contains("$mappingValueNode = $parseNode->getChildNode(\"@odata.type\");", result);
     }
     [Fact]
-    public async void WriteApiConstructor()
+    public async Task WriteApiConstructorAsync()
     {
         setup();
         parentClass.AddProperty(new CodeProperty
@@ -1590,7 +1640,7 @@ public class CodeMethodWriterTests : IDisposable
         codeMethod.DeserializerModules = new() { "Microsoft\\Kiota\\Serialization\\Deserializer" };
         codeMethod.SerializerModules = new() { "Microsoft\\Kiota\\Serialization\\Serializer" };
         parentClass.AddMethod(codeMethod);
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP }, parentClass.Parent as CodeNamespace);
         languageWriter.Write(codeMethod);
         var result = stringWriter.ToString();
         Assert.Contains("public function __construct(RequestAdapter $requestAdapter)", result);
@@ -1598,7 +1648,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WritesApiClientWithBackingStoreConstructor()
+    public async Task WritesApiClientWithBackingStoreConstructorAsync()
     {
         setup();
         var constructor = new CodeMethod
@@ -1619,7 +1669,7 @@ public class CodeMethodWriterTests : IDisposable
             Optional = true,
             Documentation = new()
             {
-                Description = "The backing store to use for the models.",
+                DescriptionTemplate = "The backing store to use for the models.",
             },
             Kind = CodeParameterKind.BackingStore,
             Type = new CodeType
@@ -1650,7 +1700,7 @@ public class CodeMethodWriterTests : IDisposable
         parentClass.AddMethod(constructor);
         parentClass.Kind = CodeClassKind.RequestBuilder;
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         _codeMethodWriter.WriteCodeElement(constructor, languageWriter);
         var result = stringWriter.ToString();
@@ -1660,7 +1710,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WritesModelWithBackingStoreConstructor()
+    public async Task WritesModelWithBackingStoreConstructorAsync()
     {
         setup();
         parentClass.Kind = CodeClassKind.Model;
@@ -1670,7 +1720,7 @@ public class CodeMethodWriterTests : IDisposable
             Access = AccessModifier.Public,
             Documentation = new()
             {
-                Description = "The constructor for this class",
+                DescriptionTemplate = "The constructor for this class",
             },
             ReturnType = new CodeType { Name = "void" },
             Kind = CodeMethodKind.Constructor
@@ -1687,7 +1737,7 @@ public class CodeMethodWriterTests : IDisposable
         };
         parentClass.AddProperty(propWithDefaultValue);
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         _codeMethodWriter.WriteCodeElement(constructor, languageWriter);
         var result = stringWriter.ToString();
@@ -1760,7 +1810,7 @@ public class CodeMethodWriterTests : IDisposable
 
     [Theory]
     [MemberData(nameof(GetterWithBackingStoreProperties))]
-    public async void WritesGettersWithBackingStore(CodeProperty property, params string[] expected)
+    public async Task WritesGettersWithBackingStoreAsync(CodeProperty property, params string[] expected)
     {
         setup();
         parentClass.Kind = CodeClassKind.Model;
@@ -1775,7 +1825,7 @@ public class CodeMethodWriterTests : IDisposable
         parentClass.AddProperty(backingStoreProperty);
         parentClass.AddProperty(property);
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         // Refiner adds setters & getters for properties
         foreach (var getter in parentClass.GetMethodsOffKind(CodeMethodKind.Getter))
@@ -1794,7 +1844,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WritesSettersWithBackingStore()
+    public async Task WritesSettersWithBackingStoreAsync()
     {
         setup();
         parentClass.Kind = CodeClassKind.Model;
@@ -1816,7 +1866,7 @@ public class CodeMethodWriterTests : IDisposable
         };
         parentClass.AddProperty(modelProperty);
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         // Refiner adds setters & getters for properties
         foreach (var getter in parentClass.GetMethodsOffKind(CodeMethodKind.Setter))
@@ -1832,7 +1882,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void ReplaceBinaryTypeWithStreamInterface()
+    public async Task ReplaceBinaryTypeWithStreamInterfaceAsync()
     {
         setup();
         var binaryProperty = new CodeProperty
@@ -1842,7 +1892,7 @@ public class CodeMethodWriterTests : IDisposable
             Type = new CodeType { Name = "binary" }
         };
         parentClass.AddProperty(binaryProperty);
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         parentClass.GetMethodsOffKind(CodeMethodKind.Getter, CodeMethodKind.Setter).ToList().ForEach(x => _codeMethodWriter.WriteCodeElement(x, languageWriter));
         var result = stringWriter.ToString();
 
@@ -2281,7 +2331,7 @@ public class CodeMethodWriterTests : IDisposable
         });
     }
     [Fact]
-    public async void WritesRequestConfigurationConstructor()
+    public async Task WritesRequestConfigurationConstructorAsync()
     {
         setup();
         var queryParamClass = new CodeClass { Name = "TestRequestQueryParameter", Kind = CodeClassKind.QueryParameters };
@@ -2292,7 +2342,7 @@ public class CodeMethodWriterTests : IDisposable
             {
                 Name = "queryParameters",
                 Kind = CodePropertyKind.QueryParameters,
-                Documentation = new() { Description = "Request query parameters", },
+                Documentation = new() { DescriptionTemplate = "Request query parameters", },
                 Type = new CodeType { Name = queryParamClass.Name, TypeDefinition = queryParamClass },
             },
             new CodeProperty
@@ -2300,18 +2350,18 @@ public class CodeMethodWriterTests : IDisposable
                 Name = "headers",
                 Access = AccessModifier.Public,
                 Kind = CodePropertyKind.Headers,
-                Documentation = new() { Description = "Request headers", },
+                Documentation = new() { DescriptionTemplate = "Request headers", },
                 Type = new CodeType { Name = "RequestHeaders", IsExternal = true },
             },
             new CodeProperty
             {
                 Name = "options",
                 Kind = CodePropertyKind.Options,
-                Documentation = new() { Description = "Request options", },
+                Documentation = new() { DescriptionTemplate = "Request options", },
                 Type = new CodeType { Name = "IList<IRequestOption>", IsExternal = true },
             }
         });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         var constructor = parentClass.GetMethodsOffKind(CodeMethodKind.Constructor).ToList();
         Assert.NotEmpty(constructor);
@@ -2326,7 +2376,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WritesQueryParameterFactoryMethod()
+    public async Task WritesQueryParameterFactoryMethodAsync()
     {
         setup();
         var queryParamClass = new CodeClass { Name = "TestRequestQueryParameter", Kind = CodeClassKind.QueryParameters };
@@ -2336,21 +2386,21 @@ public class CodeMethodWriterTests : IDisposable
             {
                 Name = "select",
                 Kind = CodePropertyKind.QueryParameter,
-                Documentation = new() { Description = "Select properties to be returned", },
+                Documentation = new() { DescriptionTemplate = "Select properties to be returned", },
                 Type = new CodeType { Name = "string", CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array },
             },
             new CodeProperty
             {
                 Name = "count",
                 Kind = CodePropertyKind.QueryParameter,
-                Documentation = new() { Description = "Include count of items", },
+                Documentation = new() { DescriptionTemplate = "Include count of items", },
                 Type = new CodeType { Name = "boolean" },
             },
             new CodeProperty
             {
                 Name = "top",
                 Kind = CodePropertyKind.QueryParameter,
-                Documentation = new() { Description = "Show only the first n items", },
+                Documentation = new() { DescriptionTemplate = "Show only the first n items", },
                 Type = new CodeType { Name = "integer" },
             }
         });
@@ -2361,11 +2411,11 @@ public class CodeMethodWriterTests : IDisposable
             {
                 Name = "queryParameters",
                 Kind = CodePropertyKind.QueryParameters,
-                Documentation = new() { Description = "Request query parameters", },
+                Documentation = new() { DescriptionTemplate = "Request query parameters", },
                 Type = new CodeType { Name = queryParamClass.Name, TypeDefinition = queryParamClass },
             }
         });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         var constructor = parentClass.GetMethodsOffKind(CodeMethodKind.Factory).ToList();
         Assert.NotEmpty(constructor);
@@ -2377,7 +2427,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async void WritesQueryParameterConstructor()
+    public async Task WritesQueryParameterConstructorAsync()
     {
         setup();
         parentClass.Kind = CodeClassKind.QueryParameters;
@@ -2386,25 +2436,25 @@ public class CodeMethodWriterTests : IDisposable
             {
                 Name = "select",
                 Kind = CodePropertyKind.QueryParameter,
-                Documentation = new() { Description = "Select properties to be returned", },
+                Documentation = new() { DescriptionTemplate = "Select properties to be returned", },
                 Type = new CodeType { Name = "string", CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array },
             },
             new CodeProperty
             {
                 Name = "count",
                 Kind = CodePropertyKind.QueryParameter,
-                Documentation = new() { Description = "Include count of items", },
+                Documentation = new() { DescriptionTemplate = "Include count of items", },
                 Type = new CodeType { Name = "boolean" },
             },
             new CodeProperty
             {
                 Name = "Top",
                 Kind = CodePropertyKind.QueryParameter,
-                Documentation = new() { Description = "Show only the first n items", },
+                Documentation = new() { DescriptionTemplate = "Show only the first n items", },
                 Type = new CodeType { Name = "integer" },
             }
         });
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         var constructor = parentClass.GetMethodsOffKind(CodeMethodKind.Constructor).ToList();
         Assert.NotEmpty(constructor);
@@ -2418,7 +2468,7 @@ public class CodeMethodWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task WritesFullyQualifiedNameWhenSimilarTypeAlreadyExists()
+    public async Task WritesFullyQualifiedNameWhenSimilarTypeAlreadyExistsAsync()
     {
         setup();
         var modelNamespace = root.AddNamespace("Models");
@@ -2449,7 +2499,7 @@ public class CodeMethodWriterTests : IDisposable
         var testMethod = new CodeMethod { Name = "testMethod", Kind = CodeMethodKind.RequestExecutor, HttpMethod = HttpMethod.Post, ReturnType = new CodeType { TypeDefinition = returnType3, CollectionKind = CodeTypeBase.CodeTypeCollectionKind.Array } };
         parentClass.AddMethod(getMethod, deleteMethod, testMethod);
 
-        await ILanguageRefiner.Refine(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
+        await ILanguageRefiner.RefineAsync(new GenerationConfiguration { Language = GenerationLanguage.PHP, UsesBackingStore = true }, root);
         _codeMethodWriter = new CodeMethodWriter(new PhpConventionService(), true);
         _codeMethodWriter.WriteCodeElement(getMethod, languageWriter);
         _codeMethodWriter.WriteCodeElement(deleteMethod, languageWriter);
@@ -2461,4 +2511,50 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("return $this->requestAdapter->sendCollectionAsync($requestInfo, [Component::class, 'createFromDiscriminatorValue'], null);", result);
     }
 
+    [Fact]
+    public void WritesRequestGeneratorAcceptHeaderQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        method.AcceptedResponseTypes.Add("application/json; profile=\"CamelCase\"");
+        languageWriter.Write(method);
+        var result = stringWriter.ToString();
+        Assert.Contains("$requestInfo->tryAddHeader('Accept', \"application/json; profile=\\\"CamelCase\\\"\");", result);
+    }
+
+    [Fact]
+    public void WritesRequestGeneratorContentTypeQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        AddRequestProperties();
+        AddRequestBodyParameters();
+        method.RequestBodyContentType = "application/json; profile=\"CamelCase\"";
+        languageWriter.Write(method);
+        var result = stringWriter.ToString();
+        Assert.Contains("\"application/json; profile=\\\"CamelCase\\\"\"", result);
+    }
+    [Fact]
+    public async Task WritesRequestGeneratorBodyForMultipartAsync()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        AddRequestProperties();
+        AddRequestBodyParameters();
+        method.Parameters.OfKind(CodeParameterKind.RequestBody)!.Type = new CodeType
+        {
+            Name = "MultipartBody",
+            IsExternal = true
+        };
+        method.RequestBodyContentType = "multipart/form-data";
+        await _refiner.RefineAsync(root, new CancellationToken(false));
+        languageWriter.Write(method);
+        var result = stringWriter.ToString();
+        Assert.Contains("MultiPartBody $body", result);
+        Assert.Contains("$requestInfo->setContentFromParsable($this->requestAdapter, \"multipart/form-data\", $body);", result);
+    }
 }

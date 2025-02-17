@@ -9,7 +9,7 @@ using Kiota.Builder.Writers.Python;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Python;
-public class CodeClassDeclarationWriterTests : IDisposable
+public sealed class CodeClassDeclarationWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -99,6 +99,7 @@ public class CodeClassDeclarationWriterTests : IDisposable
         var interfaceDef = new CodeInterface
         {
             Name = "SomeInterface",
+            OriginalClass = new CodeClass() { Name = "SomeInterface" }
         };
         ns.AddInterface(interfaceDef);
         var nUsing = new CodeUsing
@@ -233,5 +234,20 @@ public class CodeClassDeclarationWriterTests : IDisposable
         codeElementWriter.WriteCodeElement(declaration, writer);
         var result = tw.ToString();
         Assert.DoesNotContain("from . import message", result);
+    }
+    [Fact]
+    public void WritesModelClassDeprecationInformation()
+    {
+        parentClass.Kind = CodeClassKind.Model;
+        parentClass.Deprecation = new("This class is deprecated", DateTimeOffset.Parse("2024-01-01T00:00:00Z"), DateTimeOffset.Parse("2024-01-01T00:00:00Z"), "v2.0");
+        codeElementWriter.WriteCodeElement(parentClass.StartBlock, writer);
+        var result = tw.ToString();
+        Assert.Contains("@dataclass", result);
+        Assert.Contains("class ParentClass()", result);
+        Assert.Contains("warn(", result);
+        Assert.Contains("This class is deprecated", result);
+        Assert.Contains("2024-01-01", result);
+        Assert.Contains("2024-01-01", result);
+        Assert.Contains("v2.0", result);
     }
 }

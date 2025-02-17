@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,6 +13,7 @@ using Kiota.Builder.Configuration;
 using Kiota.Builder.Extensions;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.OpenApi.Any;
 using Microsoft.OpenApi.Interfaces;
 using Microsoft.OpenApi.MicrosoftExtensions;
@@ -21,9 +23,10 @@ using Microsoft.OpenApi.Services;
 using Moq;
 
 using Xunit;
+using HttpMethod = Kiota.Builder.CodeDOM.HttpMethod;
 
 namespace Kiota.Builder.Tests;
-public class KiotaBuilderTests : IDisposable
+public sealed partial class KiotaBuilderTests : IDisposable
 {
     private readonly List<string> _tempFiles = new();
     public void Dispose()
@@ -38,7 +41,7 @@ public class KiotaBuilderTests : IDisposable
     [InlineData("https://graph.microsoft.com/docs/description.yaml", "../v1.0", "https://graph.microsoft.com/v1.0")]
     [InlineData("https://graph.microsoft.com/description.yaml", "https://graph.microsoft.com/v1.0", "https://graph.microsoft.com/v1.0")]
     [Theory]
-    public async Task SupportsRelativeServerUrl(string descriptionUrl, string serverRelativeUrl, string expected)
+    public async Task SupportsRelativeServerUrlAsync(string descriptionUrl, string serverRelativeUrl, string expected)
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
@@ -73,7 +76,43 @@ paths:
         Assert.Equal(expected, constructor.BaseUrl);
     }
     [Fact]
-    public async Task DeduplicatesHostNames()
+    public async Task HonoursNoneKeyForSerializationAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  /enumeration:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = "https://graph.microsoft.com/description.yaml", Serializers = ["none"], Deserializers = ["none"] }, _httpClient);
+        await using var fs = new FileStream(tempFilePath, FileMode.Open);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        builder.SetApiRootUrl();
+        var codeModel = builder.CreateSourceModel(node);
+        var rootNS = codeModel.FindNamespaceByName("ApiSdk");
+        Assert.NotNull(rootNS);
+        var clientBuilder = rootNS.FindChildByName<CodeClass>("Graph", false);
+        Assert.NotNull(clientBuilder);
+        var constructor = clientBuilder.Methods.FirstOrDefault(static x => x.IsOfKind(CodeMethodKind.ClientConstructor));
+        Assert.NotNull(constructor);
+        Assert.Empty(constructor.SerializerModules);
+        Assert.Empty(constructor.DeserializerModules);
+    }
+    [Fact]
+    public async Task DeduplicatesHostNamesAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
@@ -109,7 +148,7 @@ paths:
         Assert.Equal("https://api.funtranslations.com", constructor.BaseUrl);
     }
     [Fact]
-    public async Task DeduplicatesHostNamesWithOpenAPI2()
+    public async Task DeduplicatesHostNamesWithOpenAPI2Async()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @$"swagger: 2.0
@@ -147,7 +186,7 @@ paths:
         Assert.Equal("https://api.funtranslations.com", constructor.BaseUrl);
     }
     [Fact]
-    public async Task HandlesSpecialCharactersInPathSegment()
+    public async Task HandlesSpecialCharactersInPathSegmentAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
@@ -191,12 +230,177 @@ components:
         Assert.Null(modelsNS.FindNamespaceByName("ApiSdk.models.Specialized-Complex"));
         Assert.NotNull(specializedNS.FindChildByName<CodeClass>("StorageAccount", false));
     }
-    private readonly HttpClient _httpClient = new();
     [Fact]
-    public async Task ParsesEnumDescriptions()
+    public async Task HandlesPathWithRepeatedSegment()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://api.funtranslations.com
+paths:
+  /media/response/response/{{id}}:
+    get:
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaResponseModel'
+components:
+  schemas:
+    MediaResponseModel:
+      type: object
+      properties:
+        name:
+          type: string
+        id:
+          type: string
+          format: uuid
+        mediaType:
+          type: string
+        url:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration
+        {
+            ClientClassName = "Graph",
+            OpenAPIFilePath = "https://api.apis.guru/v2/specs/funtranslations.com/starwars/2.3/swagger.json"
+        }, _httpClient);
+        await using var fs = new FileStream(tempFilePath, FileMode.Open);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        builder.SetApiRootUrl();
+        var codeModel = builder.CreateSourceModel(node);
+        var rootNS = codeModel.FindNamespaceByName("ApiSdk");
+        Assert.NotNull(rootNS);
+        var responseBuilderNs = codeModel.FindNamespaceByName("ApiSdk.media.response");
+        Assert.NotNull(responseBuilderNs);
+        var responseRequestBuilder = responseBuilderNs.FindChildByName<CodeClass>("ResponseRequestBuilder", false);
+        Assert.NotNull(responseRequestBuilder);
+        var navigationProperty = responseRequestBuilder.Properties.FirstOrDefault(prop =>
+            prop.IsOfKind(CodePropertyKind.RequestBuilder) &&
+            prop.Name.Equals("Response", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(navigationProperty);
+        var navigationPropertyType = navigationProperty.Type as CodeType;
+        Assert.NotNull(navigationPropertyType);
+        Assert.NotEqual(responseRequestBuilder, navigationPropertyType.TypeDefinition);// the request builder should not be the same as the class it is in.
+        var nestedResponseBuilderNs = codeModel.FindNamespaceByName("ApiSdk.media.response.response");
+        var nestedResponseRequestBuilder = nestedResponseBuilderNs.FindChildByName<CodeClass>("ResponseRequestBuilder", false);
+        Assert.Equal(nestedResponseRequestBuilder, navigationPropertyType.TypeDefinition);// the request builder should not be the same as the class it is in.
+    }
+    [Fact]
+    public async Task HandlesPathWithItemInNameSegment()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://api.funtranslations.com
+paths:
+  /media/item/{{id}}:
+    get:
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaResponseModel'
+  /media/item/{{id}}/nestedItem:
+    get:
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaResponseModel'
+components:
+  schemas:
+    MediaResponseModel:
+      type: object
+      properties:
+        name:
+          type: string
+        id:
+          type: string
+          format: uuid
+        mediaType:
+          type: string
+        url:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration
+        {
+            ClientClassName = "Graph",
+            OpenAPIFilePath = "https://api.apis.guru/v2/specs/funtranslations.com/starwars/2.3/swagger.json"
+        }, _httpClient);
+        await using var fs = new FileStream(tempFilePath, FileMode.Open);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        builder.SetApiRootUrl();
+        var codeModel = builder.CreateSourceModel(node);
+        var rootNS = codeModel.FindNamespaceByName("ApiSdk");
+        Assert.NotNull(rootNS);
+        var mediaBuilderNs = codeModel.FindNamespaceByName("ApiSdk.media");
+        Assert.NotNull(mediaBuilderNs);
+        var mediaRequestBuilder = mediaBuilderNs.FindChildByName<CodeClass>("MediaRequestBuilder", false);
+        Assert.NotNull(mediaRequestBuilder);
+        var navigationProperty = mediaRequestBuilder.Properties.FirstOrDefault(prop =>
+            prop.IsOfKind(CodePropertyKind.RequestBuilder) &&
+            prop.Name.Equals("Item", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(navigationProperty);
+        Assert.Equal("Item_EscapedRequestBuilder", navigationProperty.Type.Name);
+        var itemBuilderNs = mediaBuilderNs.FindNamespaceByName("ApiSdk.media.item_escaped");
+        Assert.NotNull(itemBuilderNs);
+        var itemRequestBuilder = itemBuilderNs.FindChildByName<CodeClass>("Item_escapedRequestBuilder", false);
+        Assert.NotNull(itemRequestBuilder.Indexer);
+        Assert.Equal("ItemItemRequestBuilder", itemRequestBuilder.Indexer.ReturnType.Name);
+        var nestedItemBuilderNs = itemBuilderNs.FindNamespaceByName("ApiSdk.media.item_escaped.item");
+        Assert.NotNull(nestedItemBuilderNs);
+        var nestedItemRequestBuilder = nestedItemBuilderNs.FindChildByName<CodeClass>("ItemItemRequestBuilder", false);
+        Assert.NotNull(nestedItemRequestBuilder);
+        Assert.NotNull(nestedItemRequestBuilder.Methods.FirstOrDefault(m =>
+            m.HttpMethod == HttpMethod.Get &&
+            m.IsAsync &&
+            m.Name.Equals("Get", StringComparison.OrdinalIgnoreCase)));
+        var modelsNS = codeModel.FindNamespaceByName("ApiSdk.models");
+        Assert.NotNull(modelsNS);
+        Assert.NotNull(modelsNS.FindChildByName<CodeClass>("MediaResponseModel", false));
+        var nestedNestedItemProperty =
+            nestedItemRequestBuilder.FindChildByName<CodeProperty>("NestedItem", false);
+        Assert.NotNull(nestedNestedItemProperty);
+        Assert.Equal("NestedItemRequestBuilder", nestedNestedItemProperty.Type.Name, StringComparer.OrdinalIgnoreCase);
+    }
+    private readonly HttpClient _httpClient = new();
+    [Fact]
+    public async Task ParsesEnumDescriptionsAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -258,23 +462,23 @@ components:
         var firstOption = enumDef.Options.First();
         Assert.Equal("+1", firstOption.SerializationName);
         Assert.Equal("plus_1", firstOption.Name);
-        Assert.Empty(firstOption.Documentation.Description);
+        Assert.Empty(firstOption.Documentation.DescriptionTemplate);
         var secondOption = enumDef.Options.ElementAt(1);
         Assert.Equal("-1", secondOption.SerializationName);
         Assert.Equal("minus_1", secondOption.Name);
-        Assert.Empty(secondOption.Documentation.Description);
+        Assert.Empty(secondOption.Documentation.DescriptionTemplate);
         var thirdOption = enumDef.Options.ElementAt(2);
         Assert.Equal("Standard_LRS", thirdOption.SerializationName);
         Assert.Equal("StandardLocalRedundancy", thirdOption.Name);
-        Assert.NotEmpty(thirdOption.Documentation.Description);
-        Assert.Single(enumDef.Options.Where(static x => x.Name.Equals("Premium_LRS", StringComparison.OrdinalIgnoreCase)));
+        Assert.NotEmpty(thirdOption.Documentation.DescriptionTemplate);
+        Assert.Single(enumDef.Options, static x => x.Name.Equals("Premium_LRS", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public async Task ParsesEnumFlagsInformation()
+    public async Task ParsesEnumFlagsInformationAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -321,10 +525,10 @@ components:
         Assert.True(enumDef.Flags);
     }
     [Fact]
-    public async Task DoesntConflictOnModelsNamespace()
+    public async Task DoesntConflictOnModelsNamespaceAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -377,11 +581,108 @@ components:
         Assert.NotNull(innerRequestBuilderNS.FindChildByName<CodeClass>("InnerRequestBuilder", false));
 
     }
-    [Fact]
-    public async Task NamesComponentsInlineSchemasProperly()
+    [Theory]
+    [InlineData(GenerationLanguage.CSharp)]
+    [InlineData(GenerationLanguage.Java)]
+    [InlineData(GenerationLanguage.TypeScript)]
+    [InlineData(GenerationLanguage.Python)]
+    [InlineData(GenerationLanguage.Go)]
+    [InlineData(GenerationLanguage.PHP)]
+    [InlineData(GenerationLanguage.Ruby)]
+    public async Task DoesNotAddSuperflousFieldsToModelsAsync(GenerationLanguage language)
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.3
+info:
+  title: Example API
+  version: 1.0.0
+servers:
+  - url: ""https://localhost:8080""
+paths:
+  ""/api/all"":
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ""#/components/schemas/AorB""
+        required: true
+      responses:
+        ""200"":
+          $ref: ""#/components/responses/AorBResponse""
+components:
+  schemas:
+    A:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          default: ""a""
+    B:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          default: ""b""
+    AorB:
+      oneOf:
+        - $ref: ""#/components/schemas/A""
+        - $ref: ""#/components/schemas/B""
+      discriminator:
+        propertyName: type
+        mapping:
+          a: ""#/components/schemas/A""
+          b: ""#/components/schemas/B""
+  responses:
+    AorBResponse:
+      description: mandatory
+      content:
+        application/json:
+          schema:
+            $ref: ""#/components/schemas/AorB""");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var generationConfiguration = new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, Language = language }; // we can use any language that creates wrapper types for composed types in different ways
+        var builder = new KiotaBuilder(mockLogger.Object, generationConfiguration, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        await builder.ApplyLanguageRefinementAsync(generationConfiguration, codeModel, CancellationToken.None);
+        var requestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.api.all");
+        Assert.NotNull(requestBuilderNamespace);
+        if (language == GenerationLanguage.TypeScript || language == GenerationLanguage.Go)
+        {// these languages use CodeFiles
+            var requestExecutorMethod = codeModel.FindChildByName<CodeMethod>("post");
+            Assert.NotNull(requestExecutorMethod);
+            var returnType = requestExecutorMethod.ReturnType as CodeType;
+            var returnTypeDefinition = returnType.TypeDefinition as CodeInterface;
+            if (language == GenerationLanguage.TypeScript)
+            {
+                Assert.Equal(2, returnTypeDefinition.Properties.Count());
+            }
+            if (language == GenerationLanguage.Go)
+            {
+                Assert.Equal(4, returnTypeDefinition.Methods.Count());// a getter and a setter for each property in Go.
+            }
+        }
+        else
+        {
+            var allRequestBuilderClass = requestBuilderNamespace.FindChildByName<CodeClass>("allRequestBuilder", false);
+            var executor = allRequestBuilderClass.Methods.FirstOrDefault(m => m.IsOfKind(CodeMethodKind.RequestExecutor));
+            Assert.NotNull(executor);
+            var returnType = executor.ReturnType as CodeType;
+            var returnTypeDefinition = returnType.TypeDefinition as CodeClass;
+            Assert.Equal(2, returnTypeDefinition.Properties.Count());
+        }
+    }
+    [Fact]
+    public async Task NamesComponentsInlineSchemasProperlyAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -450,10 +751,10 @@ components:
     [InlineData("readOnly: true")]
     [InlineData("writeOnly: true")]
     [InlineData("deprecated: true")]
-    public async Task DoesNotIntroduceIntermediateTypesForMeaninglessProperties(string additionalInformation)
+    public async Task DoesNotIntroduceIntermediateTypesForMeaninglessPropertiesAsync(string additionalInformation)
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -504,10 +805,10 @@ components:
         Assert.Null(modelsNS.FindChildByName<CodeClass>("UsersResponse", false)); //empty type
     }
     [Fact]
-    public async Task TrimsInheritanceUnusedModels()
+    public async Task TrimsInheritanceUnusedModelsAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -660,10 +961,87 @@ components:
         Assert.Null(modelsNS.FindChildByName<CodeClass>("AuditEvent", false)); //unused type
     }
     [Fact]
-    public async Task TrimsInheritanceUnusedModelsWithUnion()
+    public async Task DisambiguatesReservedPropertiesAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: v1.0
+  x-ms-generated-by:
+    toolName: Microsoft.OpenApi.OData
+    toolVersion: 1.0.9.0
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  '/security/alerts_v2/{alert-id}':
+    get:
+      responses:
+        200:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.alert'
+components:
+  schemas:
+    microsoft.graph.entity:
+      title: entity
+      required:
+        - '@odata.type'
+      type: object
+      properties:
+        id:
+          type: string
+        '@odata.type':
+          type: string
+    microsoft.graph.dictionary:
+      title: dictionary
+      required:
+        - '@odata.type'
+      type: object
+      properties:
+        '@odata.type':
+          type: string
+    microsoft.graph.alert:
+      allOf:
+        - $ref: '#/components/schemas/microsoft.graph.entity'
+        - title: alert
+          required:
+            - '@odata.type'
+          type: object
+          properties:
+            actorDisplayName:
+              type: string
+              nullable: true
+            additionalData:
+              anyOf:
+                - $ref: '#/components/schemas/microsoft.graph.dictionary'
+                - type: object
+                  nullable: true");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var modelsNS = codeModel.FindNamespaceByName("ApiSdk.models.microsoft.graph");
+        Assert.NotNull(modelsNS);
+        var entityClass = modelsNS.FindChildByName<CodeClass>("Entity", false);
+        Assert.NotNull(entityClass);
+        var additionalDataProperty = entityClass.FindChildByName<CodeProperty>("AdditionalData", false);
+        Assert.NotNull(additionalDataProperty);
+        Assert.True(additionalDataProperty.Kind is CodePropertyKind.AdditionalData);
+        var alertClass = modelsNS.FindChildByName<CodeClass>("Alert", false);
+        Assert.NotNull(alertClass);
+        var additionalDataEscapedProperty = alertClass.FindChildByName<CodeProperty>("AdditionalDataProperty", false);
+        Assert.NotNull(additionalDataEscapedProperty);
+        Assert.True(additionalDataEscapedProperty.Kind is CodePropertyKind.Custom);
+    }
+    [Fact]
+    public async Task TrimsInheritanceUnusedModelsWithUnionAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -790,20 +1168,20 @@ components:
         Assert.NotNull(modelsNS.FindChildByName<CodeClass>("EducationUser", false));
         Assert.Null(modelsNS.FindChildByName<CodeClass>("AuditEvent", false));
     }
-    private static async Task<Stream> GetDocumentStream(string document)
+    internal static async Task<Stream> GetDocumentStreamAsync(string document)
     {
         var ms = new MemoryStream();
         await using var tw = new StreamWriter(ms, Encoding.UTF8, leaveOpen: true);
-        tw.Write(document);
+        await tw.WriteAsync(document);
         await tw.FlushAsync();
         ms.Seek(0, SeekOrigin.Begin);
         return ms;
     }
     [Fact]
-    public async Task ParsesKiotaExtension()
+    public async Task ParsesKiotaExtensionAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -832,7 +1210,7 @@ servers:
         Assert.Equal("3.0.0", csharpInfo.Dependencies.First().Version);
     }
     [Fact]
-    public async Task UpdatesGenerationConfigurationFromInformation()
+    public async Task UpdatesGenerationConfigurationFromInformationAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @"openapi: 3.0.1
@@ -867,10 +1245,10 @@ servers:
         _tempFiles.Add(tempFilePath);
     }
     [Fact]
-    public async Task DoesntFailOnEmptyKiotaExtension()
+    public async Task DoesntFailOnEmptyKiotaExtensionAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -885,10 +1263,10 @@ servers:
         Assert.Null(extensionResult);
     }
     [Fact]
-    public async Task DoesntFailOnParameterWithoutSchemaKiotaExtension()
+    public async Task DoesntFailOnParameterWithoutSchemaKiotaExtensionAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -909,7 +1287,7 @@ paths:
         Assert.NotNull(model);
     }
     [Fact]
-    public async Task GetsUrlTreeNode()
+    public async Task GetsUrlTreeNodeAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @"openapi: 3.0.1
@@ -932,13 +1310,13 @@ paths:
         var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
         var treeNode = await builder.GetUrlTreeNodeAsync(new CancellationToken());
         Assert.NotNull(treeNode);
-        Assert.Equal("/", treeNode.Segment);
-        Assert.Equal("enumeration", treeNode.Children.First().Value.Segment);
+        Assert.Equal("/", treeNode.DeduplicatedSegment());
+        Assert.Equal("enumeration", treeNode.Children.First().Value.DeduplicatedSegment());
 
         _tempFiles.Add(tempFilePath);
     }
     [Fact]
-    public async Task DoesntThrowOnMissingServerForV2()
+    public async Task DoesntThrowOnMissingServerForV2Async()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllLinesAsync(tempFilePath, new[] { "swagger: 2.0", "title: \"Todo API\"", "version: \"1.0.0\"", "host: mytodos.doesntexit", "basePath: v2", "schemes:", " - https", " - http" });
@@ -1159,6 +1537,74 @@ paths:
         Assert.Equal("double", progressProp.Type.Name);
     }
     [Fact]
+    public void MultiNestedArraysSupportedAsUntypedNodes()
+    {
+        var fooSchema = new OpenApiSchema
+        {
+            Type = "object",
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "sortBy", new OpenApiSchema {
+                        Type = "array",
+                        Items = new OpenApiSchema {
+                            Type = "array",
+                            Items = new OpenApiSchema {
+                                Type = "string"
+                            }
+                        }
+                    }
+                },
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "#/components/schemas/bar.foo"
+            },
+            UnresolvedReference = false
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["foos/{id}"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = fooSchema
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+            Components = new OpenApiComponents
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "bar.foo", fooSchema
+                    }
+                }
+            }
+        };
+        var mockLogger = new CountLogger<KiotaBuilder>();
+        var builder = new KiotaBuilder(mockLogger, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var fooClass = codeModel.FindNamespaceByName("ApiSdk.models").FindChildByName<CodeClass>("foo");
+        Assert.NotNull(fooClass);
+        var sortByProp = fooClass.FindChildByName<CodeProperty>("sortBy", false);
+        Assert.NotNull(sortByProp);
+        Assert.Equal(KiotaBuilder.UntypedNodeName, sortByProp.Type.Name);// nested array property an UntypedNode
+    }
+    [Fact]
     public void Object_Arrays_are_supported()
     {
         var userSchema = new OpenApiSchema
@@ -1243,8 +1689,8 @@ paths:
         var valueProp = userResponseClass.FindChildByName<CodeProperty>("value", false);
         Assert.NotNull(valueProp);
         var unknownProp = userResponseClass.FindChildByName<CodeProperty>("unknown", false);
-        Assert.Null(unknownProp);
-        Assert.Equal(1, mockLogger.Count.First(static x => x.Key == LogLevel.Warning).Value);
+        Assert.NotNull(unknownProp);
+        Assert.Equal(KiotaBuilder.UntypedNodeName, unknownProp.Type.Name);// left out property is an UntypedNode
     }
     [Fact]
     public void TextPlainEndpointsAreSupported()
@@ -1408,7 +1854,7 @@ paths:
         Assert.NotNull(getEffectivePermissionsRequestBuilder);
         var constructorMethod = getEffectivePermissionsRequestBuilder.FindChildByName<CodeMethod>("constructor", false);
         Assert.NotNull(constructorMethod);
-        Assert.Single(constructorMethod.Parameters.Where(static x => x.IsOfKind(CodeParameterKind.Path)));
+        Assert.Single(constructorMethod.Parameters, static x => x.IsOfKind(CodeParameterKind.Path));
     }
     [Fact]
     public void Supports_Path_Query_And_Header_Parameters()
@@ -1558,16 +2004,16 @@ paths:
         Assert.NotNull(getEffectivePermissionsRequestBuilder);
         var constructorMethod = getEffectivePermissionsRequestBuilder.FindChildByName<CodeMethod>("constructor", false);
         Assert.NotNull(constructorMethod);
-        Assert.Single(constructorMethod.Parameters.Where(static x => x.IsOfKind(CodeParameterKind.Path)));
+        Assert.Single(constructorMethod.Parameters, static x => x.IsOfKind(CodeParameterKind.Path));
         var parameters = getEffectivePermissionsRequestBuilder
             .Methods
             .SingleOrDefault(static cm => cm.IsOfKind(CodeMethodKind.RequestGenerator) && cm.HttpMethod == Builder.CodeDOM.HttpMethod.Get)?
             .PathQueryAndHeaderParameters;
         Assert.Equal(4, parameters.Count());
-        Assert.NotNull(parameters.SingleOrDefault(p => p.Name == "IfMatch" && p.Kind == CodeParameterKind.Headers));
-        Assert.NotNull(parameters.SingleOrDefault(p => p.Name == "ConsistencyLevel" && p.Kind == CodeParameterKind.Headers));
-        Assert.NotNull(parameters.SingleOrDefault(p => p.Name == "select" && p.Kind == CodeParameterKind.QueryParameter));
-        Assert.NotNull(parameters.SingleOrDefault(p => p.Name == "scope" && p.Kind == CodeParameterKind.Path));
+        Assert.Single(parameters, p => "IfMatch".Equals(p.Name, StringComparison.Ordinal) && p.Kind == CodeParameterKind.Headers);
+        Assert.Single(parameters, p => "ConsistencyLevel".Equals(p.Name, StringComparison.Ordinal) && p.Kind == CodeParameterKind.Headers);
+        Assert.Single(parameters, p => "select".Equals(p.Name, StringComparison.Ordinal) && p.Kind == CodeParameterKind.QueryParameter);
+        Assert.Single(parameters, p => "scope".Equals(p.Name, StringComparison.Ordinal) && p.Kind == CodeParameterKind.Path);
     }
     [Fact]
     public void DeduplicatesConflictingParameterNamesForCLI()
@@ -1696,7 +2142,7 @@ paths:
                                                             Type = "object",
                                                             Properties = new Dictionary<string, OpenApiSchema> {
                                                                 {
-                                                                    "info", new OpenApiSchema {
+                                                                    "info2", new OpenApiSchema {
                                                                         Type = "object",
                                                                         Properties = new Dictionary<string, OpenApiSchema> {
                                                                             {
@@ -1708,9 +2154,9 @@ paths:
                                                                     }
                                                                 }
                                                             },
-                                                            AllOf = new List<OpenApiSchema> {
+                                                            AllOf = [
                                                                 resourceSchema,
-                                                            }
+                                                            ]
                                                         }
                                                     }
                                                 }
@@ -1741,12 +2187,12 @@ paths:
         var itemsNS = codeModel.FindNamespaceByName("ApiSdk.resource.item");
         var responseClass = itemsNS.FindChildByName<CodeClass>("ResourceGetResponse");
         var derivedResourceClass = itemsNS.FindChildByName<CodeClass>("ResourceGetResponse_derivedResource");
-        var derivedResourceInfoClass = itemsNS.FindChildByName<CodeClass>("ResourceGetResponse_derivedResource_info");
+        var derivedResourceInfoClass = itemsNS.FindChildByName<CodeClass>("ResourceGetResponse_derivedResource_info2");
 
 
         Assert.NotNull(resourceClass);
         Assert.NotNull(derivedResourceClass);
-        Assert.NotNull(derivedResourceClass.StartBlock);
+        Assert.NotNull(derivedResourceClass.StartBlock.Inherits);
         Assert.Equal(derivedResourceClass.StartBlock.Inherits.TypeDefinition, resourceClass);
         Assert.NotNull(derivedResourceInfoClass);
         Assert.NotNull(responseClass);
@@ -2037,6 +2483,19 @@ paths:
                                 }
                             }
                         },
+                        ["402"] = new OpenApiResponse
+                        {
+                            Content =
+                            {
+                                ["application/json"] = new OpenApiMediaType
+                                {
+                                    Schema = new OpenApiSchema
+                                    {
+                                        Type = "string"
+                                    }
+                                }
+                            }
+                        },
                         ["401"] = new OpenApiResponse
                         {
                             Content =
@@ -2083,6 +2542,7 @@ paths:
         var keys = executorMethod.ErrorMappings.Select(x => x.Key).ToHashSet();
         Assert.Contains("4XX", keys);
         Assert.Contains("401", keys);
+        Assert.DoesNotContain("402", keys);
         Assert.Contains("5XX", keys);
         var errorType401 = codeModel.FindChildByName<CodeClass>("tasks401Error");
         Assert.NotNull(errorType401);
@@ -2470,8 +2930,8 @@ paths:
         var codeModel = builder.CreateSourceModel(node);
         var weatherType = codeModel.FindChildByName<CodeClass>("WeatherForecast");
         Assert.NotNull(weatherType);
-        Assert.Empty(weatherType.StartBlock.Implements.Where(x => x.Name.Equals("IAdditionalDataHolder", StringComparison.OrdinalIgnoreCase)));
-        Assert.Empty(weatherType.Properties.Where(x => x.IsOfKind(CodePropertyKind.AdditionalData)));
+        Assert.DoesNotContain(weatherType.StartBlock.Implements, x => x.Name.Equals("IAdditionalDataHolder", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(weatherType.Properties, x => x.IsOfKind(CodePropertyKind.AdditionalData));
     }
     [Fact]
     public void SquishesLonelyNullables()
@@ -2642,6 +3102,172 @@ paths:
         Assert.NotNull(executorMethod);
         Assert.True(executorMethod.ReturnType is CodeType); // not union
         Assert.Null(codeModel.FindChildByName<CodeClass>("createUploadSessionResponseMember1"));
+    }
+    [Fact]
+    public void SupportsArraysInComposedTypes()
+    {
+        var anyOfSchema = new OpenApiSchema
+        {
+            Type = "object",
+            AdditionalPropertiesAllowed = false,
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "date", new OpenApiSchema {
+                        AnyOf = [
+                            new OpenApiSchema {
+                                Type = "string",
+                            },
+                            new OpenApiSchema {
+                                Type = "array",
+                                Items = new OpenApiSchema {
+                                    Type = "string",
+                                },
+                            },
+                        ]
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "anyOfNullable",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["createUploadSession"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, OpenApiMediaType> {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = anyOfSchema
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            Components = new OpenApiComponents
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "anyOfNullable", anyOfSchema
+                    }
+                },
+            },
+        };
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var anyOfClass = codeModel.FindChildByName<CodeClass>("anyOfNullable");
+        Assert.NotNull(anyOfClass);
+        var dateProperty = anyOfClass.FindChildByName<CodeProperty>("date", false);
+        Assert.NotNull(dateProperty);
+        if (dateProperty.Type is not CodeIntersectionType unionType)
+            Assert.Fail("Date property type is not a union type");
+        else
+        {
+            Assert.Equal(2, unionType.Types.Count());
+            Assert.Contains(unionType.Types, x => x.Name.Equals("string", StringComparison.OrdinalIgnoreCase) && x.CollectionKind is CodeTypeBase.CodeTypeCollectionKind.None);
+            Assert.Contains(unionType.Types, x => x.Name.Equals("string", StringComparison.OrdinalIgnoreCase) && x.CollectionKind is CodeTypeBase.CodeTypeCollectionKind.Complex);
+        }
+    }
+    [Fact]
+    public void SupportsNullableAnyOf()
+    {
+        var anyOfSchema = new OpenApiSchema
+        {
+            Type = "object",
+            AdditionalPropertiesAllowed = false,
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "date", new OpenApiSchema {
+                        AnyOf = [
+                            new OpenApiSchema {
+                                Type = "string",
+                                Nullable = true
+                            },
+                            new OpenApiSchema {
+                                Type = "number",
+                                Format = "int64",
+                                Nullable = true,
+                            }
+                        ]
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "anyOfNullable",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["createUploadSession"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse
+                                {
+                                    Content = new Dictionary<string, OpenApiMediaType> {
+                                        ["application/json"] = new OpenApiMediaType
+                                        {
+                                            Schema = anyOfSchema
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            Components = new OpenApiComponents
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "anyOfNullable", anyOfSchema
+                    }
+                },
+            },
+        };
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
+        builder.SetOpenApiDocument(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var anyOfClass = codeModel.FindChildByName<CodeClass>("anyOfNullable");
+        Assert.NotNull(anyOfClass);
+        var dateProperty = anyOfClass.FindChildByName<CodeProperty>("date", false);
+        Assert.NotNull(dateProperty);
+        if (dateProperty.Type is not CodeIntersectionType unionType)
+            Assert.Fail("Date property type is not a union type");
+        else
+        {
+            Assert.Equal(2, unionType.Types.Count());
+            Assert.Contains(unionType.Types, x => x.Name.Equals("string", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(unionType.Types, x => x.Name.Equals("int64", StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     [Fact]
@@ -2932,7 +3558,7 @@ paths:
         Assert.Single(entityClass.DiscriminatorInformation.DiscriminatorMappings);
     }
     [Fact]
-    public async Task AddsDiscriminatorMappingsOneOfImplicit()
+    public async Task AddsDiscriminatorMappingsOneOfImplicitAsync()
     {
         var entitySchema = new OpenApiSchema
         {
@@ -3061,7 +3687,7 @@ paths:
         var builder = new KiotaBuilder(mockLogger.Object, config, _httpClient);
         var node = builder.CreateUriSpace(document);
         var codeModel = builder.CreateSourceModel(node);
-        await builder.ApplyLanguageRefinement(config, codeModel, CancellationToken.None);
+        await builder.ApplyLanguageRefinementAsync(config, codeModel, CancellationToken.None);
         var entityClass = codeModel.FindChildByName<CodeClass>("entity");
         var directoryObjectsClass = codeModel.FindChildByName<CodeClass>("directoryObjects");
         Assert.NotNull(entityClass);
@@ -3075,7 +3701,7 @@ paths:
         Assert.Equal(2, directoryObjectsClass.DiscriminatorInformation.DiscriminatorMappings.Count());
     }
     [Fact]
-    public async Task AddsDiscriminatorMappingsAllOfImplicit()
+    public async Task AddsDiscriminatorMappingsAllOfImplicitAsync()
     {
         var entitySchema = new OpenApiSchema
         {
@@ -3225,10 +3851,17 @@ paths:
         var builder = new KiotaBuilder(mockLogger.Object, config, _httpClient);
         var node = builder.CreateUriSpace(document);
         var codeModel = builder.CreateSourceModel(node);
-        await builder.ApplyLanguageRefinement(config, codeModel, CancellationToken.None);
+        await builder.ApplyLanguageRefinementAsync(config, codeModel, CancellationToken.None);
         var entityClass = codeModel.FindChildByName<CodeClass>("entity");
         var directoryObjectClass = codeModel.FindChildByName<CodeClass>("directoryObject");
         var userClass = codeModel.FindChildByName<CodeClass>("user");
+        mockLogger.Verify(logger => logger.Log(
+                It.Is<LogLevel>(logLevel => logLevel == LogLevel.Warning),
+                It.Is<EventId>(eventId => eventId.Id == 0),
+                It.Is<It.IsAnyType>((@object, @type) => @object.ToString().Contains(" is not inherited from ", StringComparison.OrdinalIgnoreCase) && @type.Name == "FormattedLogValues"),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+            Times.Never);
         Assert.NotNull(entityClass);
         Assert.NotNull(directoryObjectClass);
         Assert.NotNull(userClass);
@@ -3246,7 +3879,7 @@ paths:
     }
 
     [Fact]
-    public async Task AddsDiscriminatorMappingsAllOfImplicitWithParentHavingMappingsWhileChildDoesNot()
+    public async Task AddsDiscriminatorMappingsAllOfImplicitWithParentHavingMappingsWhileChildDoesNotAsync()
     {
         var entitySchema = new OpenApiSchema
         {
@@ -3290,9 +3923,10 @@ paths:
         var directoryObjectSchema = new OpenApiSchema
         {
             Type = "object",
-            AllOf = new List<OpenApiSchema> {
+            AllOf = [
                 entitySchema,
-                new OpenApiSchema {
+                new OpenApiSchema
+                {
                     Properties = new Dictionary<string, OpenApiSchema> {
                         {
                             "tenant", new OpenApiSchema {
@@ -3309,7 +3943,7 @@ paths:
                         "@odata.type"
                     }
                 }
-            },
+            ],
             Reference = new OpenApiReference
             {
                 Id = "microsoft.graph.directoryObject",
@@ -3320,9 +3954,10 @@ paths:
         var userSchema = new OpenApiSchema
         {
             Type = "object",
-            AllOf = new List<OpenApiSchema> {
+            AllOf = [
                 directoryObjectSchema,
-                new OpenApiSchema {
+                new OpenApiSchema
+                {
                     Properties = new Dictionary<string, OpenApiSchema> {
                         {
                             "firstName", new OpenApiSchema {
@@ -3339,7 +3974,7 @@ paths:
                         "@odata.type"
                     }
                 }
-            },
+            ],
             Reference = new OpenApiReference
             {
                 Id = "microsoft.graph.user",
@@ -3405,7 +4040,7 @@ paths:
         var builder = new KiotaBuilder(mockLogger.Object, config, _httpClient);
         var node = builder.CreateUriSpace(document);
         var codeModel = builder.CreateSourceModel(node);
-        await builder.ApplyLanguageRefinement(config, codeModel, CancellationToken.None);
+        await builder.ApplyLanguageRefinementAsync(config, codeModel, CancellationToken.None);
         var entityClass = codeModel.FindChildByName<CodeClass>("entity");
         var directoryObjectClass = codeModel.FindChildByName<CodeClass>("directoryObject");
         var userClass = codeModel.FindChildByName<CodeClass>("user");
@@ -3499,6 +4134,48 @@ paths:
         var typeNames = executorReturnType.Types.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert.Contains("simpleObject", typeNames);
         Assert.Contains("double", typeNames);
+    }
+    [Fact]
+    public async Task AnyOfArrayWorksAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.0
+info:
+  title: AnyOf Array
+  version: 1.0.0
+paths:
+  /foo:
+    get:
+      responses:
+        200:
+          description: ""OK""
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - type: string
+                - type: array
+                  items:
+                    $ref: ""#/components/schemas/FooResponseObject""
+components:
+  schemas:
+    FooResponseObject:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var response = codeModel.FindChildByName<CodeMethod>("GetAsFooGetResponse");
+        var unionType = response.ReturnType as CodeIntersectionType;
+
+        Assert.Equal(2, unionType.Types.Count());
+        Assert.Single(unionType.Types, x => x.Name == "FooResponseObject" && x.IsCollection);
     }
     [Fact]
     public void UnionOfInlineSchemasWorks()
@@ -3745,7 +4422,7 @@ paths:
     [Fact]
     public void InheritedTypeWithInlineSchemaWorks()
     {
-        var baseObjet = new OpenApiSchema
+        var baseObject = new OpenApiSchema
         {
             Type = "object",
             Properties = new Dictionary<string, OpenApiSchema> {
@@ -3776,12 +4453,13 @@ paths:
             },
             UnresolvedReference = false
         };
-        var derivedObjet = new OpenApiSchema
+        var derivedObject = new OpenApiSchema
         {
             Type = "object",
-            AllOf = new List<OpenApiSchema> {
-                baseObjet,
-                new OpenApiSchema {
+            AllOf = [
+                baseObject,
+                new OpenApiSchema
+                {
                     Type = "object",
                     Properties = new Dictionary<string, OpenApiSchema> {
                         {
@@ -3790,7 +4468,8 @@ paths:
                             }
                         }
                     },
-                    Discriminator = new OpenApiDiscriminator {
+                    Discriminator = new OpenApiDiscriminator
+                    {
                         PropertyName = "kind",
                         Mapping = new Dictionary<string, string> {
                             {
@@ -3799,7 +4478,7 @@ paths:
                         }
                     },
                 }
-            },
+            ],
             Reference = new OpenApiReference
             {
                 Id = "subNS.derivedObject",
@@ -3810,9 +4489,10 @@ paths:
         var secondLevelDerivedObject = new OpenApiSchema
         {
             Type = "object",
-            AllOf = new List<OpenApiSchema> {
-                derivedObjet,
-                new OpenApiSchema {
+            AllOf = [
+                derivedObject,
+                new OpenApiSchema
+                {
                     Type = "object",
                     Properties = new Dictionary<string, OpenApiSchema> {
                         {
@@ -3822,7 +4502,7 @@ paths:
                         }
                     }
                 }
-            },
+            ],
             Reference = new OpenApiReference
             {
                 Id = "subNS.secondLevelDerivedObject",
@@ -3844,7 +4524,7 @@ paths:
                                 ["200"] = new OpenApiResponse {
                                     Content = {
                                         ["application/json"] = new OpenApiMediaType {
-                                            Schema = derivedObjet
+                                            Schema = derivedObject
                                         }
                                     }
                                 },
@@ -3857,10 +4537,10 @@ paths:
             {
                 Schemas = new Dictionary<string, OpenApiSchema> {
                     {
-                        "subNS.baseObject", baseObjet
+                        "subNS.baseObject", baseObject
                     },
                     {
-                        "subNS.derivedObject", derivedObjet
+                        "subNS.derivedObject", derivedObject
                     },
                     {
                         "subNS.secondLevelDerivedObject", secondLevelDerivedObject
@@ -3881,12 +4561,12 @@ paths:
         var executorReturnType = requestExecutorMethod.ReturnType as CodeType;
         Assert.NotNull(executorReturnType);
         Assert.Contains("derivedObject", requestExecutorMethod.ReturnType.Name);
-        var secondLevelDerivedClass = codeModel.FindChildByName<CodeClass>("derivedObject");
-        Assert.NotNull(secondLevelDerivedObject);
-        var factoryMethod = secondLevelDerivedClass.GetChildElements(true).OfType<CodeMethod>().FirstOrDefault(x => x.IsOfKind(CodeMethodKind.Factory));
+        var derivedObjectClass = codeModel.FindChildByName<CodeClass>("derivedObject");
+        Assert.NotNull(derivedObjectClass);
+        var factoryMethod = derivedObjectClass.GetChildElements(true).OfType<CodeMethod>().FirstOrDefault(x => x.IsOfKind(CodeMethodKind.Factory));
         Assert.NotNull(factoryMethod);
-        Assert.Equal("kind", secondLevelDerivedClass.DiscriminatorInformation.DiscriminatorPropertyName);
-        Assert.NotEmpty(secondLevelDerivedClass.DiscriminatorInformation.DiscriminatorMappings);
+        Assert.Equal("kind", derivedObjectClass.DiscriminatorInformation.DiscriminatorPropertyName);
+        Assert.NotEmpty(derivedObjectClass.DiscriminatorInformation.DiscriminatorMappings);
     }
     [InlineData("string", "", "string")]// https://spec.openapis.org/registry/format/
     [InlineData("string", "commonmark", "string")]
@@ -3908,6 +4588,8 @@ paths:
     [InlineData("integer", "int64", "int64")]
     [InlineData("number", "int8", "sbyte")]
     [InlineData("integer", "int8", "sbyte")]
+    [InlineData("number", "int16", "integer")]
+    [InlineData("integer", "int16", "integer")]
     [InlineData("number", "uint8", "byte")]
     [InlineData("integer", "uint8", "byte")]
     [InlineData("number", "", "double")]
@@ -4134,7 +4816,7 @@ paths:
     [InlineData(true)]
     [InlineData(false)]
     [Theory]
-    public async Task AddsQueryParameterTypesAsModels(bool ecb)
+    public async Task AddsQueryParameterTypesAsModelsAsync(bool ecb)
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
@@ -4796,7 +5478,7 @@ components:
         Assert.NotNull(modelsNS);
         var responseClass = modelsNS.Classes.FirstOrDefault(x => x.IsOfKind(CodeClassKind.Model));
         Assert.NotNull(responseClass);
-        Assert.Empty(responseClass.Documentation.Description);
+        Assert.Empty(responseClass.Documentation.DescriptionTemplate);
     }
     [Fact]
     public void CleansUpInvalidDescriptionCharacters()
@@ -4860,7 +5542,7 @@ components:
         Assert.NotNull(modelsNS);
         var responseClass = modelsNS.Classes.FirstOrDefault(x => x.IsOfKind(CodeClassKind.Model));
         Assert.NotNull(responseClass);
-        Assert.Equal("some description with invalid characters: ", responseClass.Documentation.Description);
+        Assert.Equal("some description with invalid characters: ", responseClass.Documentation.DescriptionTemplate);
     }
     [InlineData("application/json")]
     [InlineData("application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false;charset=utf-8")]
@@ -4980,7 +5662,7 @@ components:
         Assert.NotNull(modelsSubNS);
         var responseClass = modelsSubNS.FindChildByName<CodeClass>("AnswerGetResponse", false);
         Assert.NotNull(responseClass);
-        Assert.Equal("some description", responseClass.Documentation.Description);
+        Assert.Equal("some description", responseClass.Documentation.DescriptionTemplate);
 
         var obsoleteResponseClass = modelsSubNS.FindChildByName<CodeClass>("AnswerResponse", false);
         if (excludeBackwardCompatible)
@@ -4988,22 +5670,22 @@ components:
         else
         {
             Assert.NotNull(obsoleteResponseClass);
-            Assert.Equal("some description", obsoleteResponseClass.Documentation.Description);
+            Assert.Equal("some description", obsoleteResponseClass.Documentation.DescriptionTemplate);
             Assert.True(obsoleteResponseClass.Deprecation.IsDeprecated);
         }
 
         var requestBuilderClass = modelsSubNS.Classes.FirstOrDefault(static c => c.IsOfKind(CodeClassKind.RequestBuilder));
         Assert.NotNull(requestBuilderClass);
-        Assert.Equal("some path item description", requestBuilderClass.Documentation.Description);
+        Assert.Equal("some path item description", requestBuilderClass.Documentation.DescriptionTemplate);
 
         if (excludeBackwardCompatible)
-            Assert.Single(requestBuilderClass.Methods.Where(static x => x.Kind is CodeMethodKind.RequestExecutor));
+            Assert.Single(requestBuilderClass.Methods, static x => x.Kind is CodeMethodKind.RequestExecutor);
         else
             Assert.Equal(2, requestBuilderClass.Methods.Where(static x => x.Kind is CodeMethodKind.RequestExecutor).Count());
 
         var responseProperty = codeModel.FindNamespaceByName("TestSdk").Classes.SelectMany(c => c.Properties).FirstOrDefault(static p => p.Kind == CodePropertyKind.RequestBuilder);
         Assert.NotNull(responseProperty);
-        Assert.Equal("some path item description", responseProperty.Documentation.Description);
+        Assert.Equal("some path item description", responseProperty.Documentation.DescriptionTemplate);
     }
 
     [Fact]
@@ -5241,8 +5923,14 @@ components:
         Assert.NotNull(executor);
         Assert.Equal("void", executor.ReturnType.Name);
     }
-    [Fact]
-    public void DoesntGenerateVoidExecutorOnMixed204()
+    [InlineData(204)]
+    [InlineData(301)]
+    [InlineData(302)]
+    [InlineData(303)]
+    [InlineData(304)]
+    [InlineData(307)]
+    [Theory]
+    public void DoesntGenerateVoidExecutorOnMixedNoContent(int statusCode)
     {
         var myObjectSchema = new OpenApiSchema
         {
@@ -5279,7 +5967,7 @@ components:
                                         }
                                     }
                                 },
-                                ["204"] = new OpenApiResponse(),
+                                [statusCode.ToString()] = new OpenApiResponse(),
                             }
                         }
                     }
@@ -5302,10 +5990,81 @@ components:
         Assert.NotNull(rbNS);
         var rbClass = rbNS.Classes.FirstOrDefault(x => x.IsOfKind(CodeClassKind.RequestBuilder));
         Assert.NotNull(rbClass);
-        Assert.Single(rbClass.Methods.Where(x => x.IsOfKind(CodeMethodKind.RequestExecutor)));
+        Assert.Single(rbClass.Methods, x => x.IsOfKind(CodeMethodKind.RequestExecutor));
         var executor = rbClass.Methods.FirstOrDefault(x => x.IsOfKind(CodeMethodKind.RequestExecutor));
         Assert.NotNull(executor);
         Assert.NotEqual("void", executor.ReturnType.Name);
+    }
+    [InlineData(204)]
+    [InlineData(301)]
+    [InlineData(302)]
+    [InlineData(303)]
+    [InlineData(304)]
+    [InlineData(307)]
+    [Theory]
+    public void GeneratesVoidReturnTypeForNoContent(int statusCode)
+    {
+        var myObjectSchema = new OpenApiSchema
+        {
+            Type = "object",
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "id", new OpenApiSchema {
+                        Type = "string",
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "myobject",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["answer"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                [statusCode.ToString()] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+            },
+            Components = new()
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "myobject", myObjectSchema
+                    }
+                }
+            }
+        };
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "TestClient", ClientNamespaceName = "TestSdk", ApiRootUrl = "https://localhost" }, _httpClient);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var rbNS = codeModel.FindNamespaceByName("TestSdk.Answer");
+        Assert.NotNull(rbNS);
+        var rbClass = rbNS.Classes.FirstOrDefault(x => x.IsOfKind(CodeClassKind.RequestBuilder));
+        Assert.NotNull(rbClass);
+        Assert.Single(rbClass.Methods, x => x.IsOfKind(CodeMethodKind.RequestExecutor));
+        var executor = rbClass.Methods.FirstOrDefault(x => x.IsOfKind(CodeMethodKind.RequestExecutor));
+        Assert.NotNull(executor);
+        Assert.Equal("void", executor.ReturnType.Name);
     }
     [InlineData(new[] { "microsoft.graph.user", "microsoft.graph.termstore.term" }, "microsoft.graph")]
     [InlineData(new[] { "microsoft.graph.user", "odata.errors.error" }, "")]
@@ -5582,6 +6341,73 @@ components:
         Assert.NotNull(objectClass);
         var nameProperty = objectClass.Properties.First(static x => "name".Equals(x.Name, StringComparison.OrdinalIgnoreCase));
         Assert.Equal(isReadonly, nameProperty.ReadOnly);
+    }
+    [Theory]
+    [InlineData("#GET", 0)]
+    [InlineData("/#GET", 1)]
+    public void SupportsIncludeFilterOnRootPath(string inputPattern, int expectedPathsCount)
+    {
+        var myObjectSchema = new OpenApiSchema
+        {
+            Type = "object",
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "name", new OpenApiSchema {
+                        Type = "string",
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "myobject",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false,
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["/"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                },
+            },
+            Components = new()
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "myobject", myObjectSchema
+                    }
+                }
+            }
+        };
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration
+        {
+            ClientClassName = "TestClient",
+            ClientNamespaceName = "TestSdk",
+            ApiRootUrl = "https://localhost",
+            IncludePatterns = new() {
+                inputPattern
+            }
+        }, _httpClient);
+        builder.FilterPathsByPatterns(document);
+        Assert.Equal(expectedPathsCount, document.Paths.Count);
     }
     [Fact]
     public void SupportsIncludeFilter()
@@ -5901,9 +6727,9 @@ components:
         Assert.NotNull(messagesNS);
         var messagesRS = messagesNS.FindChildByName<CodeClass>("MessagesRequestBuilder");
         Assert.NotNull(messagesRS);
-        Assert.Single(messagesRS.Methods.Where(static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Post));
-        Assert.Single(messagesRS.Methods.Where(static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Get));
-        Assert.Empty(messagesRS.Methods.Where(static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Put));
+        Assert.Single(messagesRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Post);
+        Assert.Single(messagesRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Get);
+        Assert.DoesNotContain(messagesRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Put);
         var studentsNS = codeModel.FindNamespaceByName("TestSdk.students");
         var studentsRS = studentsNS.FindChildByName<CodeClass>("StudentsRequestBuilder");
         Assert.NotNull(studentsRS);
@@ -5988,10 +6814,10 @@ components:
         Assert.Equal("userId", method.Parameters.Last(static x => x.IsOfKind(CodeParameterKind.Path)).Name);
     }
     [Fact]
-    public async Task DisambiguatesOperationsConflictingWithPath1()
+    public async Task DisambiguatesOperationsConflictingWithPath1Async()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.0
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.0
 info:
   title: Microsoft Graph get user API
   version: 1.0.0
@@ -6038,10 +6864,10 @@ components:
         Assert.NotNull(getRB.Properties.FirstOrDefault(static x => x.IsOfKind(CodePropertyKind.RequestBuilder) && "GetPath".Equals(x.Name, StringComparison.OrdinalIgnoreCase)));
     }
     [Fact]
-    public async Task DisambiguatesOperationsConflictingWithPath2()
+    public async Task DisambiguatesOperationsConflictingWithPath2Async()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.0
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.0
 info:
   title: Microsoft Graph get user API
   version: 1.0.0
@@ -6088,10 +6914,10 @@ components:
         Assert.NotNull(getRB.Properties.FirstOrDefault(static x => x.IsOfKind(CodePropertyKind.RequestBuilder) && "GetPath".Equals(x.Name, StringComparison.OrdinalIgnoreCase)));
     }
     [Fact]
-    public async Task IndexerAndRequestBuilderNamesMatch()
+    public async Task IndexerAndRequestBuilderNamesMatchAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.0
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.0
 info:
   title: Microsoft Graph get user API
   version: 1.0.0
@@ -6127,7 +6953,7 @@ components:
         var collectionIndexer = collectionRequestBuilder.Indexer;
         Assert.NotNull(collectionIndexer);
         Assert.Equal("string", collectionIndexer.IndexParameter.Type.Name, StringComparer.OrdinalIgnoreCase);
-        Assert.Equal("Unique identifier of the item", collectionIndexer.IndexParameter.Documentation.Description, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("Unique identifier of the item", collectionIndexer.IndexParameter.Documentation.DescriptionTemplate, StringComparer.OrdinalIgnoreCase);
         Assert.False(collectionIndexer.Deprecation.IsDeprecated);
         var itemRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.me.posts.item");
         Assert.NotNull(itemRequestBuilderNamespace);
@@ -6135,10 +6961,10 @@ components:
         Assert.Equal(collectionIndexer.ReturnType.Name, itemRequestBuilder.Name);
     }
     [Fact]
-    public async Task IndexerTypeIsAccurateAndBackwardCompatibleIndexersAreAdded()
+    public async Task IndexerTypeIsAccurateAndBackwardCompatibleIndexersAreAddedAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.0
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.0
 info:
   title: Microsoft Graph get user API
   version: 1.0.0
@@ -6162,6 +6988,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/microsoft.graph.post'
+  /authors/{author-id}/posts:
+    get:
+      parameters:
+        - name: author-id
+          in: path
+          required: true
+          description: The id of the author's posts to retrieve
+          schema:
+            type: string
+            format: uuid
+      responses:
+        200:
+          description: Success!
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.post'
+  /actors/{actor-id}/foo/baz:
+    get:
+      parameters:
+        - name: actor-id
+          in: path
+          required: true
+          description: The id of the actor
+          schema:
+            type: string
+            format: uuid
+      responses:
+        200:
+          description: Success!
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.post'
 components:
   schemas:
     microsoft.graph.post:
@@ -6176,30 +7036,69 @@ components:
         var document = await builder.CreateOpenApiDocumentAsync(fs);
         var node = builder.CreateUriSpace(document!);
         var codeModel = builder.CreateSourceModel(node);
-        var collectionRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.me.posts");
-        Assert.NotNull(collectionRequestBuilderNamespace);
-        var collectionRequestBuilder = collectionRequestBuilderNamespace.FindChildByName<CodeClass>("postsRequestBuilder");
-        var collectionIndexer = collectionRequestBuilder.Indexer;
-        Assert.NotNull(collectionIndexer);
-        Assert.Equal("integer", collectionIndexer.IndexParameter.Type.Name);
-        Assert.Equal("The id of the pet to retrieve", collectionIndexer.IndexParameter.Documentation.Description, StringComparer.OrdinalIgnoreCase);
-        Assert.False(collectionIndexer.IndexParameter.Type.IsNullable);
-        Assert.False(collectionIndexer.Deprecation.IsDeprecated);
-        var collectionStringIndexer = collectionRequestBuilder.FindChildByName<CodeIndexer>($"{collectionIndexer.Name}-string");
-        Assert.NotNull(collectionStringIndexer);
-        Assert.Equal("string", collectionStringIndexer.IndexParameter.Type.Name);
-        Assert.True(collectionStringIndexer.IndexParameter.Type.IsNullable);
-        Assert.True(collectionStringIndexer.Deprecation.IsDeprecated);
-        var itemRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.me.posts.item");
-        Assert.NotNull(itemRequestBuilderNamespace);
-        var itemRequestBuilder = itemRequestBuilderNamespace.FindChildByName<CodeClass>("postItemRequestBuilder");
-        Assert.Equal(collectionIndexer.ReturnType.Name, itemRequestBuilder.Name);
+
+        var postsCollectionRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.me.posts");
+        Assert.NotNull(postsCollectionRequestBuilderNamespace);
+        var postsCollectionRequestBuilder = postsCollectionRequestBuilderNamespace.FindChildByName<CodeClass>("postsRequestBuilder");
+        var postsCollectionIndexer = postsCollectionRequestBuilder.Indexer;
+        Assert.NotNull(postsCollectionIndexer);
+        Assert.Equal("integer", postsCollectionIndexer.IndexParameter.Type.Name);
+        Assert.Equal("The id of the pet to retrieve", postsCollectionIndexer.IndexParameter.Documentation.DescriptionTemplate, StringComparer.OrdinalIgnoreCase);
+        Assert.False(postsCollectionIndexer.IndexParameter.Type.IsNullable);
+        Assert.False(postsCollectionIndexer.Deprecation.IsDeprecated);
+        var postsCollectionStringIndexer = postsCollectionRequestBuilder.FindChildByName<CodeIndexer>($"{postsCollectionIndexer.Name}-string");
+        Assert.NotNull(postsCollectionStringIndexer);
+        Assert.Equal("string", postsCollectionStringIndexer.IndexParameter.Type.Name);
+        Assert.True(postsCollectionStringIndexer.IndexParameter.Type.IsNullable);
+        Assert.True(postsCollectionStringIndexer.Deprecation.IsDeprecated);
+        var postsItemRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.me.posts.item");
+        Assert.NotNull(postsItemRequestBuilderNamespace);
+        var postsItemRequestBuilder = postsItemRequestBuilderNamespace.FindChildByName<CodeClass>("postItemRequestBuilder");
+        Assert.Equal(postsCollectionIndexer.ReturnType.Name, postsItemRequestBuilder.Name);
+
+        var authorsCollectionRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.authors");
+        Assert.NotNull(authorsCollectionRequestBuilderNamespace);
+        var authorsCollectionRequestBuilder = authorsCollectionRequestBuilderNamespace.FindChildByName<CodeClass>("authorsRequestBuilder");
+        var authorsCollectionIndexer = authorsCollectionRequestBuilder.Indexer;
+        Assert.NotNull(authorsCollectionIndexer);
+        Assert.Equal("Guid", authorsCollectionIndexer.IndexParameter.Type.Name);
+        Assert.Equal("The id of the author's posts to retrieve", authorsCollectionIndexer.IndexParameter.Documentation.DescriptionTemplate, StringComparer.OrdinalIgnoreCase);
+        Assert.False(authorsCollectionIndexer.IndexParameter.Type.IsNullable);
+        Assert.False(authorsCollectionIndexer.Deprecation.IsDeprecated);
+        var authorsCllectionStringIndexer = authorsCollectionRequestBuilder.FindChildByName<CodeIndexer>($"{authorsCollectionIndexer.Name}-string");
+        Assert.NotNull(authorsCllectionStringIndexer);
+        Assert.Equal("string", authorsCllectionStringIndexer.IndexParameter.Type.Name);
+        Assert.True(authorsCllectionStringIndexer.IndexParameter.Type.IsNullable);
+        Assert.True(authorsCllectionStringIndexer.Deprecation.IsDeprecated);
+        var authorsItemRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.authors.item");
+        Assert.NotNull(authorsItemRequestBuilderNamespace);
+        var authorsItemRequestBuilder = authorsItemRequestBuilderNamespace.FindChildByName<CodeClass>("authorItemRequestBuilder");
+        Assert.Equal(authorsCollectionIndexer.ReturnType.Name, authorsItemRequestBuilder.Name);
+
+        var actorsCollectionRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.actors");
+        Assert.NotNull(actorsCollectionRequestBuilderNamespace);
+        var actorsCollectionRequestBuilder = actorsCollectionRequestBuilderNamespace.FindChildByName<CodeClass>("actorsRequestBuilder");
+        var actorsCollectionIndexer = actorsCollectionRequestBuilder.Indexer;
+        Assert.NotNull(actorsCollectionIndexer);
+        Assert.Equal("Guid", actorsCollectionIndexer.IndexParameter.Type.Name);
+        Assert.Equal("The id of the actor", actorsCollectionIndexer.IndexParameter.Documentation.DescriptionTemplate, StringComparer.OrdinalIgnoreCase);
+        Assert.False(actorsCollectionIndexer.IndexParameter.Type.IsNullable);
+        Assert.False(actorsCollectionIndexer.Deprecation.IsDeprecated);
+        var actorsCllectionStringIndexer = actorsCollectionRequestBuilder.FindChildByName<CodeIndexer>($"{actorsCollectionIndexer.Name}-string");
+        Assert.NotNull(actorsCllectionStringIndexer);
+        Assert.Equal("string", actorsCllectionStringIndexer.IndexParameter.Type.Name);
+        Assert.True(actorsCllectionStringIndexer.IndexParameter.Type.IsNullable);
+        Assert.True(actorsCllectionStringIndexer.Deprecation.IsDeprecated);
+        var actorsItemRequestBuilderNamespace = codeModel.FindNamespaceByName("ApiSdk.actors.item");
+        Assert.NotNull(actorsItemRequestBuilderNamespace);
+        var actorsItemRequestBuilder = actorsItemRequestBuilderNamespace.FindChildByName<CodeClass>("actorItemRequestBuilder");
+        Assert.Equal(actorsCollectionIndexer.ReturnType.Name, actorsItemRequestBuilder.Name);
     }
     [Fact]
-    public async Task MapsBooleanEnumToBooleanType()
+    public async Task MapsBooleanEnumToBooleanTypeAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.0
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.0
 info:
     title: Microsoft Graph get user API
     version: 1.0.0
@@ -6232,10 +7131,10 @@ paths:
         Assert.Equal("boolean", getMethod.ReturnType.Name);
     }
     [Fact]
-    public async Task MapsNumberEnumToDoubleType()
+    public async Task MapsNumberEnumToDoubleTypeAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.0
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.0
 info:
     title: Microsoft Graph get user API
     version: 1.0.0
@@ -6269,7 +7168,7 @@ paths:
     }
     [InlineData("MV22X/MV72X", "MV22XMV72X")]
     [Theory]
-    public async Task CleansInlineTypeNames(string raw, string expected)
+    public async Task CleansInlineTypeNamesAsync(string raw, string expected)
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
         await File.WriteAllTextAsync(tempFilePath, @$"openapi: 3.0.1
@@ -6305,97 +7204,6 @@ paths:
         Assert.NotNull(rootNS);
         var inlineType = rootNS.FindChildByName<CodeClass>($"enumerationGetResponse_{expected}", true);
         Assert.NotNull(inlineType);
-    }
-    [Fact]
-    public void SinglePathParametersAreDeduplicated()
-    {
-        var userSchema = new OpenApiSchema
-        {
-            Type = "object",
-            Properties = new Dictionary<string, OpenApiSchema> {
-                {
-                    "id", new OpenApiSchema {
-                        Type = "string"
-                    }
-                },
-                {
-                    "displayName", new OpenApiSchema {
-                        Type = "string"
-                    }
-                }
-            },
-            Reference = new OpenApiReference
-            {
-                Id = "#/components/schemas/microsoft.graph.user"
-            },
-            UnresolvedReference = false
-        };
-        var document = new OpenApiDocument
-        {
-            Paths = new OpenApiPaths
-            {
-                ["users/{id}/careerAdvisor"] = new OpenApiPathItem
-                {
-                    Operations = {
-                        [OperationType.Get] = new OpenApiOperation
-                        {
-                            Responses = new OpenApiResponses {
-                                ["200"] = new OpenApiResponse
-                                {
-                                    Content = {
-                                        ["application/json"] = new OpenApiMediaType
-                                        {
-                                            Schema = userSchema
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                ["users/{user-id}/manager"] = new OpenApiPathItem
-                {
-                    Operations = {
-                        [OperationType.Get] = new OpenApiOperation
-                        {
-                            Responses = new OpenApiResponses {
-                                ["200"] = new OpenApiResponse
-                                {
-                                    Content = {
-                                        ["application/json"] = new OpenApiMediaType
-                                        {
-                                            Schema = userSchema
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-            },
-            Components = new OpenApiComponents
-            {
-                Schemas = new Dictionary<string, OpenApiSchema> {
-                    {
-                        "microsoft.graph.user", userSchema
-                    }
-                }
-            }
-        };
-        var mockLogger = new CountLogger<KiotaBuilder>();
-        var builder = new KiotaBuilder(mockLogger, new GenerationConfiguration { ClientClassName = "Graph", ApiRootUrl = "https://localhost" }, _httpClient);
-        var node = builder.CreateUriSpace(document);
-        var codeModel = builder.CreateSourceModel(node);
-        var managerRB = codeModel.FindNamespaceByName("ApiSdk.users.item.manager").FindChildByName<CodeClass>("ManagerRequestBuilder", false);
-        Assert.NotNull(managerRB);
-        var managerUrlTemplate = managerRB.FindChildByName<CodeProperty>("UrlTemplate", false);
-        Assert.NotNull(managerUrlTemplate);
-        Assert.Equal("{+baseurl}/users/{id}/manager", managerUrlTemplate.DefaultValue.Trim('"'));
-        var careerAdvisorRB = codeModel.FindNamespaceByName("ApiSdk.users.item.careerAdvisor").FindChildByName<CodeClass>("CareerAdvisorRequestBuilder", false);
-        Assert.NotNull(careerAdvisorRB);
-        var careerAdvisorUrlTemplate = careerAdvisorRB.FindChildByName<CodeProperty>("UrlTemplate", false);
-        Assert.NotNull(careerAdvisorUrlTemplate);
-        Assert.Equal("{+baseurl}/users/{id}/careerAdvisor", careerAdvisorUrlTemplate.DefaultValue.Trim('"'));
     }
     [Fact]
     public void AddReservedPathParameterSymbol()
@@ -6562,10 +7370,10 @@ paths:
         Assert.Equal("{+baseurl}/users/{id}/manager", managerUrlTemplate.DefaultValue.Trim('"'));
     }
     [Fact]
-    public async Task MergesIntersectionTypes()
+    public async Task MergesIntersectionTypesAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -6617,13 +7425,13 @@ components:
         var codeModel = builder.CreateSourceModel(node);
         var resultClass = codeModel.FindChildByName<CodeClass>("DirectoryObjectGetResponse");
         Assert.NotNull(resultClass);
-        Assert.Equal(4, resultClass.Properties.Where(static x => x.IsOfKind(CodePropertyKind.Custom)).Count());
+        Assert.Equal(4, resultClass.Properties.Count(static x => x.IsOfKind(CodePropertyKind.Custom)));
     }
     [Fact]
-    public async Task SkipsInvalidItemsProperties()
+    public async Task SkipsInvalidItemsPropertiesAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -6658,14 +7466,72 @@ paths:
         var resultClass = codeModel.FindChildByName<CodeClass>("DirectoryObjectGetResponse");
         Assert.NotNull(resultClass);
         var keysToCheck = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "datasets", "datakeys", "datainfo" };
-        Assert.Empty(resultClass.Properties.Where(x => x.IsOfKind(CodePropertyKind.Custom) && keysToCheck.Contains(x.Name)));
-        Assert.Single(resultClass.Properties.Where(x => x.IsOfKind(CodePropertyKind.Custom) && x.Name.Equals("id", StringComparison.OrdinalIgnoreCase)));
+        var propertiesToValidate = resultClass.Properties.Where(x => x.IsOfKind(CodePropertyKind.Custom) && keysToCheck.Contains(x.Name)).ToArray();
+        Assert.NotNull(propertiesToValidate);
+        Assert.NotEmpty(propertiesToValidate);
+        Assert.Equal(keysToCheck.Count, propertiesToValidate.Length);// all the properties are present
+        Assert.Single(resultClass.Properties, static x => x.IsOfKind(CodePropertyKind.Custom) && x.Name.Equals("id", StringComparison.OrdinalIgnoreCase));
     }
     [Fact]
-    public async Task DiscriptionTakenFromAllOf()
+    public async Task GetsCorrectInheritedInlineSchemaNameAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.3
+servers:
+- url: https://api.github.com
+info:
+  title: GitHub API
+  version: 1.0.0
+paths:
+  '/app-manifests/{code}/conversions':
+    post:
+      operationId: apps/create-from-manifest
+      parameters:
+      - in: path
+        name: code
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                allOf:
+                - '$ref': '#/components/schemas/integration'
+                - additionalProperties: true
+                  properties:
+                    client_id:
+                      type: string
+                    client_secret:
+                      type: string
+                    pem:
+                      type: string
+                    webhook_secret:
+                      nullable: true
+                      type: string
+                  type: object
+          description: Response
+components:
+  schemas:
+    integration:
+      properties:
+        client_id:
+          type: string
+      title: GitHub app
+      type: object");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel.FindChildByName<CodeClass>("ConversionsPostResponse"));
+    }
+    [Fact]
+    public async Task DescriptionTakenFromAllOfAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -6728,16 +7594,16 @@ components:
         var document = await builder.CreateOpenApiDocumentAsync(fs);
         var node = builder.CreateUriSpace(document);
         var codeModel = builder.CreateSourceModel(node);
-        Assert.Equal("base entity", codeModel.FindChildByName<CodeClass>("entity").Documentation.Description);
-        Assert.Equal("directory object", codeModel.FindChildByName<CodeClass>("directoryObject").Documentation.Description);
-        Assert.Equal("sub1", codeModel.FindChildByName<CodeClass>("sub1").Documentation.Description);
-        Assert.Equal("sub2", codeModel.FindChildByName<CodeClass>("sub2").Documentation.Description);
+        Assert.Equal("base entity", codeModel.FindChildByName<CodeClass>("entity").Documentation.DescriptionTemplate);
+        Assert.Equal("directory object", codeModel.FindChildByName<CodeClass>("directoryObject").Documentation.DescriptionTemplate);
+        Assert.Equal("sub1", codeModel.FindChildByName<CodeClass>("sub1").Documentation.DescriptionTemplate);
+        Assert.Equal("sub2", codeModel.FindChildByName<CodeClass>("sub2").Documentation.DescriptionTemplate);
     }
     [Fact]
-    public async Task CleanupSymbolNameDoesNotCauseNameConflicts()
+    public async Task CleanupSymbolNameDoesNotCauseNameConflictsAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: Example
   description: Example
@@ -6774,10 +7640,10 @@ components:
         Assert.Equal(2, resultClass.Properties.Select(static x => x.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
     [Fact]
-    public async Task CleanupSymbolNameDoesNotCauseNameConflictsWithSuperType()
+    public async Task CleanupSymbolNameDoesNotCauseNameConflictsWithSuperTypeAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: Example
   description: Example
@@ -6831,10 +7697,10 @@ components:
         Assert.Equal("subtypeType", type.Name);
     }
     [Fact]
-    public async Task CleanupSymbolNameDoesNotCauseNameConflictsInQueryParameters()
+    public async Task CleanupSymbolNameDoesNotCauseNameConflictsInQueryParametersAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: Example
   description: Example
@@ -6874,10 +7740,10 @@ paths:
         Assert.Equal("int64", select.Type.Name);
     }
     [Fact]
-    public async Task SupportsMultiPartFormAsRequestBody()
+    public async Task SupportsMultiPartFormAsRequestBodyWithDefaultMimeTypesAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: Example
   description: Example
@@ -6889,6 +7755,16 @@ paths:
     post:
       requestBody:
         content:
+          text/csv:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string,
+                  format: binary
+            encoding:
+              file:
+                style: form
           multipart/form-data:
             schema:
               type: object
@@ -6940,10 +7816,348 @@ components:
         Assert.NotNull(addressClass);
     }
     [Fact]
-    public async Task ComplexInheritanceStructures()
+    public async Task SupportsMultiPartFormAsRequestBodyWithoutEncodingWithDefaultMimeTypesAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: Example
+  description: Example
+  version: 1.0.1
+servers:
+  - url: https://example.org
+paths:
+  /directoryObject:
+    post:
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+        responses:
+          '204':
+            content:
+              application/json:
+                schema:
+                  type: string
+components:
+  schemas:
+    address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, IncludeAdditionalData = false }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var rbClass = codeModel.FindChildByName<CodeClass>("directoryObjectRequestBuilder");
+        Assert.NotNull(rbClass);
+        var postMethod = rbClass.FindChildByName<CodeMethod>("Post", false);
+        Assert.NotNull(postMethod);
+        var bodyParameter = postMethod.Parameters.FirstOrDefault(static x => x.IsOfKind(CodeParameterKind.RequestBody));
+        Assert.NotNull(bodyParameter);
+        Assert.Equal("MultipartBody", bodyParameter.Type.Name, StringComparer.OrdinalIgnoreCase);
+        var addressClass = codeModel.FindChildByName<CodeClass>("Address");
+        Assert.NotNull(addressClass);
+    }
+    [Fact]
+    public async Task SupportsMultiPartFormAsRequestBodyWithoutEncodingWithDefaultMimeTypesAsyncWithNonDefaultMimeTypesAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: Example
+  description: Example
+  version: 1.0.1
+servers:
+  - url: https://example.org
+paths:
+  /directoryObject:
+    post:
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+        responses:
+          '204':
+            content:
+              application/json:
+                schema:
+                  type: string
+components:
+  schemas:
+    address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, IncludeAdditionalData = false, StructuredMimeTypes = new StructuredMimeTypesCollection { "multipart/form-data;q=1" } }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var rbClass = codeModel.FindChildByName<CodeClass>("directoryObjectRequestBuilder");
+        Assert.NotNull(rbClass);
+        var postMethod = rbClass.FindChildByName<CodeMethod>("Post", false);
+        Assert.NotNull(postMethod);
+        var bodyParameter = postMethod.Parameters.FirstOrDefault(static x => x.IsOfKind(CodeParameterKind.RequestBody));
+        Assert.NotNull(bodyParameter);
+        Assert.Equal("DirectoryObjectPostRequestBody", bodyParameter.Type.Name, StringComparer.OrdinalIgnoreCase); //generate the model type as we do not have the serializer for the schema registered.
+        var addressClass = codeModel.FindChildByName<CodeClass>("Address");
+        Assert.NotNull(addressClass);
+    }
+    [Fact]
+    public async Task SupportsMultipleContentTypesAsRequestBodyWithDefaultMimeTypesAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: Example
+  description: Example
+  version: 1.0.1
+servers:
+  - url: https://example.org
+paths:
+  /directoryObject:
+    post:
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+        responses:
+          '204':
+            content:
+              application/json:
+                schema:
+                  type: string
+components:
+  schemas:
+    address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, IncludeAdditionalData = false }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var rbClass = codeModel.FindChildByName<CodeClass>("directoryObjectRequestBuilder");
+        Assert.NotNull(rbClass);
+        var postMethod = rbClass.FindChildByName<CodeMethod>("Post", false);
+        Assert.NotNull(postMethod);
+        var bodyParameter = postMethod.Parameters.FirstOrDefault(static x => x.IsOfKind(CodeParameterKind.RequestBody));
+        Assert.NotNull(bodyParameter);
+        Assert.Equal("directoryObjectPostRequestBody", bodyParameter.Type.Name, StringComparer.OrdinalIgnoreCase);
+        var addressClass = codeModel.FindChildByName<CodeClass>("Address");
+        Assert.NotNull(addressClass);
+    }
+    [Fact]
+    public async Task SupportsMultipleContentTypesAsRequestBodyWithMultipartPriorityNoEncodingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: Example
+  description: Example
+  version: 1.0.1
+servers:
+  - url: https://example.org
+paths:
+  /directoryObject:
+    post:
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+        responses:
+          '204':
+            content:
+              application/json:
+                schema:
+                  type: string
+components:
+  schemas:
+    address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, IncludeAdditionalData = false, StructuredMimeTypes = new StructuredMimeTypesCollection { "multipart/form-data;q=1", "application/json;q=0.1" } }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var rbClass = codeModel.FindChildByName<CodeClass>("directoryObjectRequestBuilder");
+        Assert.NotNull(rbClass);
+        var postMethod = rbClass.FindChildByName<CodeMethod>("Post", false);
+        Assert.NotNull(postMethod);
+        var bodyParameter = postMethod.Parameters.FirstOrDefault(static x => x.IsOfKind(CodeParameterKind.RequestBody));
+        Assert.NotNull(bodyParameter);
+        Assert.Equal("directoryObjectPostRequestBody", bodyParameter.Type.Name, StringComparer.OrdinalIgnoreCase);
+        var addressClass = codeModel.FindChildByName<CodeClass>("Address");
+        Assert.NotNull(addressClass);
+    }
+    [Fact]
+    public async Task SupportsMultipleContentTypesAsRequestBodyWithMultipartPriorityAndEncodingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: Example
+  description: Example
+  version: 1.0.1
+servers:
+  - url: https://example.org
+paths:
+  /directoryObject:
+    post:
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+            encoding:
+              id:
+                contentType: text/plain
+              address:
+                contentType: application/json
+              profileImage:
+                contentType: image/png
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                address:
+                  $ref: '#/components/schemas/address'
+                profileImage:
+                  type: string
+                  format: binary
+        responses:
+          '204':
+            content:
+              application/json:
+                schema:
+                  type: string
+components:
+  schemas:
+    address:
+      type: object
+      properties:
+        street:
+          type: string
+        city:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, IncludeAdditionalData = false, StructuredMimeTypes = new StructuredMimeTypesCollection { "multipart/form-data;q=1", "application/json;q=0.1" } }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var rbClass = codeModel.FindChildByName<CodeClass>("directoryObjectRequestBuilder");
+        Assert.NotNull(rbClass);
+        var postMethod = rbClass.FindChildByName<CodeMethod>("Post", false);
+        Assert.NotNull(postMethod);
+        var bodyParameter = postMethod.Parameters.FirstOrDefault(static x => x.IsOfKind(CodeParameterKind.RequestBody));
+        Assert.NotNull(bodyParameter);
+        Assert.Equal("MultipartBody", bodyParameter.Type.Name, StringComparer.OrdinalIgnoreCase);
+        var addressClass = codeModel.FindChildByName<CodeClass>("Address");
+        Assert.NotNull(addressClass);
+    }
+    [Fact]
+    public async Task ComplexInheritanceStructuresAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: Broken inheritance
   version: '1'
@@ -7036,17 +8250,17 @@ components:
         var codeModel = builder.CreateSourceModel(node);
         Assert.NotNull(codeModel.FindChildByName<CodeClass>("Linkable"));
         var classificationClass = codeModel.FindChildByName<CodeClass>("GroupClassification");
-        Assert.Single(classificationClass.Properties.Where(static x => x.Name.Equals("description", StringComparison.OrdinalIgnoreCase)));
+        Assert.Single(classificationClass.Properties, static x => x.Name.Equals("description", StringComparison.OrdinalIgnoreCase));
         Assert.NotNull(classificationClass);
         var classificationPrimerClass = codeModel.FindChildByName<CodeClass>("GroupClassificationPrimer");
         Assert.NotNull(classificationPrimerClass);
-        Assert.Single(classificationPrimerClass.Properties.Where(static x => x.Name.Equals("name", StringComparison.OrdinalIgnoreCase)));
+        Assert.Single(classificationPrimerClass.Properties, static x => x.Name.Equals("name", StringComparison.OrdinalIgnoreCase));
     }
     [Fact]
-    public async Task InheritanceWithAllOfInBaseType()
+    public async Task InheritanceWithAllOfInBaseTypeAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -7096,10 +8310,92 @@ components:
         Assert.NotNull(codeModel.FindChildByName<CodeClass>("Group"));
     }
     [Fact]
-    public async Task InheritanceWithAllOfWith3Parts()
+    public async Task InlineSchemaWithSingleAllOfReferenceAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  /user:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.user'
+  /group/members:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.member'
+components:
+  schemas:
+    microsoft.graph.directoryObject:
+      required: ['@odata.type']
+      properties:
+        '@odata.type':
+          type: 'string'
+          default: '#microsoft.graph.directoryObject'
+      discriminator:
+        propertyName: '@odata.type'
+        mapping:
+          '#microsoft.graph.group': '#/components/schemas/microsoft.graph.group'
+    microsoft.graph.group:
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObject'
+        - title: 'group'
+          type: 'object'
+          properties:
+            groupprop:
+              type: 'string'
+    microsoft.graph.member:
+      type: 'object'
+      properties:
+        group:
+          allOf:
+            - '$ref': '#/components/schemas/microsoft.graph.group'
+    microsoft.graph.user:
+      properties:
+        groups:
+          type: array
+          items:
+            - '$ref': '#/components/schemas/microsoft.graph.group'");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var memberClass = codeModel.FindChildByName<CodeClass>("member");
+        Assert.NotNull(memberClass);
+        Assert.Equal(2, memberClass.Properties.Count());// single prop plus additionalData
+        var memberProperty = memberClass.Properties.FirstOrDefault(static x => x.Name.Equals("group", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(memberProperty);
+        Assert.Equal("group", memberProperty.Type.Name);
+        Assert.Null(memberClass.StartBlock.Inherits);//no base
+        var userClass = codeModel.FindChildByName<CodeClass>("user");
+        Assert.NotNull(userClass);
+        Assert.Equal(2, userClass.Properties.Count());// single prop plus additionalData
+        Assert.Null(userClass.StartBlock.Inherits);//no base
+        var inlinedClassThatIsDuplicate = codeModel.FindChildByName<CodeClass>("member_group");
+        Assert.Null(inlinedClassThatIsDuplicate);//no duplicate
+        var modelsNamespace = codeModel.FindChildByName<CodeNamespace>("ApiSdk.models.microsoft.graph");
+        Assert.NotNull(modelsNamespace);
+        Assert.Equal(4, modelsNamespace.Classes.Count());// only 4 classes for user, member, group and directoryObject
+    }
+    [Fact]
+    public async Task InheritanceWithAllOfWith3Parts3SchemaChildClassAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: OData Service for namespace microsoft.graph
   description: This OData service is located at https://graph.microsoft.com/v1.0
@@ -7111,11 +8407,1017 @@ paths:
     get:
       responses: 
         '200':
-          description: Example response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/microsoft.graph.directoryObject'
+  /group:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.group'
+components:
+  schemas:
+    microsoft.graph.directoryObject:
+      required: ['@odata.type']
+      properties:
+        '@odata.type':
+          type: 'string'
+          default: '#microsoft.graph.directoryObject'
+      discriminator:
+        propertyName: '@odata.type'
+        mapping:
+          '#microsoft.graph.group': '#/components/schemas/microsoft.graph.group'
+    microsoft.graph.groupFacet1:
+      properties:
+        facetprop1:
+          type: 'string'
+    microsoft.graph.groupFacet2:
+      properties:
+        facetprop2:
+          type: 'string'
+    microsoft.graph.group:
+      title: 'group'
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObject'
+        - '$ref': '#/components/schemas/microsoft.graph.groupFacet1'
+        - '$ref': '#/components/schemas/microsoft.graph.groupFacet2'");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var directoryObjectClass = codeModel.FindChildByName<CodeClass>("DirectoryObject");
+        Assert.Null(directoryObjectClass.StartBlock.Inherits);
+        Assert.NotNull(directoryObjectClass);
+        var groupClass = codeModel.FindChildByName<CodeClass>("Group");
+        Assert.NotNull(groupClass);
+        Assert.Equal(4, groupClass.Properties.Count());
+        Assert.Null(groupClass.StartBlock.Inherits);
+        Assert.Single(groupClass.Properties, static x => x.Kind is CodePropertyKind.AdditionalData);
+        Assert.Single(groupClass.Properties, static x => x.Name.Equals("oDataType", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(groupClass.Properties, static x => x.Name.Equals("facetprop1", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(groupClass.Properties, static x => x.Name.Equals("facetprop2", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task InheritanceWithAllOfBaseClassNoAdditionalPropertiesAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  /directoryObject:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.directoryResult'
+components:
+  schemas:
+    microsoft.graph.directoryResult:
+      required: ['fstype']
+      oneOf:
+        - $ref: '#/components/schemas/microsoft.graph.file'
+        - $ref: '#/components/schemas/microsoft.graph.folder'
+        - $ref: '#/components/schemas/microsoft.graph.link'
+      properties:
+        fstype:
+          type: string
+      discriminator:
+        propertyName: 'fstype'
+        mapping:
+          'file': '#/components/schemas/microsoft.graph.file'
+          'folder': '#/components/schemas/microsoft.graph.folder'
+          'link': '#/components/schemas/microsoft.graph.link'
+    microsoft.graph.baseDirectoryObject:
+      properties:
+        path:
+          type: string
+    microsoft.graph.file:
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.baseDirectoryObject'
+    microsoft.graph.folder:
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.baseDirectoryObject'
+    microsoft.graph.link:
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.baseDirectoryObject'
+      properties:
+        target:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        // Verify that all three classes referenced by the discriminator inherit from baseDirectoryObject
+        var folder = codeModel.FindChildByName<CodeClass>("Folder");
+        Assert.NotNull(folder.StartBlock.Inherits);
+        Assert.Equal("baseDirectoryObject", folder.StartBlock.Inherits.Name);
+
+        var file = codeModel.FindChildByName<CodeClass>("File");
+        Assert.NotNull(file.StartBlock.Inherits);
+        Assert.Equal("baseDirectoryObject", file.StartBlock.Inherits.Name);
+
+        var link = codeModel.FindChildByName<CodeClass>("Link");
+        Assert.NotNull(link.StartBlock.Inherits);
+        Assert.Equal("baseDirectoryObject", link.StartBlock.Inherits.Name);
+    }
+
+    [Fact]
+    public async Task ExclusiveUnionSingleEntriesMergingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(
+"""
+openapi: 3.0.0
+info:
+  title: "Generator not generating oneOf if the containing schema has type: object"
+  version: "1.0.0"
+servers:
+  - url: https://mytodos.doesnotexist/
+paths:
+  /uses-components:
+    post:
+      description: Return something
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsesComponents"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsesComponents"
+components:
+  schemas:
+    ExampleWithSingleOneOfWithTypeObject:
+      type: object
+      oneOf:
+        - $ref: "#/components/schemas/Component1"
+      discriminator:
+        propertyName: objectType
+    ExampleWithSingleOneOfWithoutTypeObject:
+      oneOf:
+        - $ref: "#/components/schemas/Component2"
+      discriminator:
+        propertyName: objectType
+
+    UsesComponents:
+      type: object
+      properties:
+        component_with_single_oneof_with_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithTypeObject"
+        component_with_single_oneof_without_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithoutTypeObject"
+
+    Component1:
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        one:
+          type: string
+
+    Component2:
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        two:
+          type: string
+""");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        // Verify that all three classes referenced by the discriminator inherit from baseDirectoryObject
+        var withObjectClass = codeModel.FindChildByName<CodeClass>("ExampleWithSingleOneOfWithTypeObject");
+        Assert.NotNull(withObjectClass);
+        var oneProperty = withObjectClass.FindChildByName<CodeProperty>("one", false);
+        Assert.NotNull(oneProperty);
+
+        var withoutObjectClass = codeModel.FindChildByName<CodeClass>("Component2");
+        Assert.NotNull(withoutObjectClass);
+        var twoProperty = withoutObjectClass.FindChildByName<CodeProperty>("two", false);
+        Assert.NotNull(twoProperty);
+    }
+
+    [Fact]
+    public async Task ExclusiveUnionInheritanceEntriesMergingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(
+"""
+openapi: 3.0.0
+info:
+  title: "Generator not generating oneOf if the containing schema has type: object"
+  version: "1.0.0"
+servers:
+  - url: https://mytodos.doesnotexist/
+paths:
+  /uses-components:
+    post:
+      description: Return something
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsesComponents"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsesComponents"
+components:
+  schemas:
+    ExampleWithSingleOneOfWithTypeObject:
+      description: "ExampleWithSingleOneOfWithTypeObject"
+      type: object
+      oneOf:
+        - $ref: "#/components/schemas/Component1"
+      discriminator:
+        propertyName: objectType
+
+    ExampleWithSingleOneOfWithoutTypeObject:
+      description: "ExampleWithSingleOneOfWithoutTypeObject"
+      oneOf:
+        - $ref: "#/components/schemas/Component2"
+      discriminator:
+        propertyName: objectType
+
+    UsesComponents:
+      type: object
+      properties:
+        component_with_single_oneof_with_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithTypeObject"
+        component_with_single_oneof_without_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithoutTypeObject"
+
+    ComponentCommon:
+      description: "ComponentCommon"
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        common:
+          type: string
+
+    Component1:
+      description: "Component1"
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - type: object
+          description: "Component1Inner"
+          properties:
+            one:
+              type: string
+      properties:
+        anotherOne:
+          type: string
+
+    Component2:
+      description: "Component2"
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - type: object
+          description: "Component2Inner"
+          properties:
+            two:
+              type: string
+      properties:
+        anotherTwo:
+          type: string
+""");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        // Verify that all three classes referenced by the discriminator inherit from baseDirectoryObject
+        var withObjectClass = codeModel.FindChildByName<CodeClass>("ExampleWithSingleOneOfWithTypeObject");
+        Assert.NotNull(withObjectClass);
+        // ExampleWithSingleOneOfWithTypeObject inherits from ComponentCommon
+        Assert.Equal("ComponentCommon", withObjectClass.BaseClass?.Name);
+        var withObjectClassOneProperty = withObjectClass.FindChildByName<CodeProperty>("one", false);
+        Assert.NotNull(withObjectClassOneProperty);
+        var withObjectClassAnotherOneProperty = withObjectClass.FindChildByName<CodeProperty>("anotherOne", false);
+        Assert.NotNull(withObjectClassAnotherOneProperty);
+
+        var withoutObjectClass = codeModel.FindChildByName<CodeClass>("Component2");
+        Assert.NotNull(withoutObjectClass);
+        // Component2 inherits from ComponentCommon
+        Assert.Equal("ComponentCommon", withoutObjectClass.BaseClass?.Name);
+        var withoutObjectClassTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("two", false);
+        Assert.NotNull(withoutObjectClassTwoProperty);
+        var withoutObjectClassClassAnotherTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("anotherTwo", false);
+        Assert.NotNull(withoutObjectClassClassAnotherTwoProperty);
+    }
+
+    [Fact]
+    public async Task ExclusiveUnionIntersectionEntriesMergingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(
+"""
+openapi: 3.0.0
+info:
+  title: "Generator not generating oneOf if the containing schema has type: object"
+  version: "1.0.0"
+servers:
+  - url: https://mytodos.doesnotexist/
+paths:
+  /uses-components:
+    post:
+      description: Return something
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsesComponents"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsesComponents"
+components:
+  schemas:
+    ExampleWithSingleOneOfWithTypeObject:
+      description: "ExampleWithSingleOneOfWithTypeObject"
+      type: object
+      oneOf:
+        - $ref: "#/components/schemas/Component1"
+      discriminator:
+        propertyName: objectType
+
+    ExampleWithSingleOneOfWithoutTypeObject:
+      description: "ExampleWithSingleOneOfWithoutTypeObject"
+      oneOf:
+        - $ref: "#/components/schemas/Component2"
+      discriminator:
+        propertyName: objectType
+
+    UsesComponents:
+      type: object
+      properties:
+        component_with_single_oneof_with_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithTypeObject"
+        component_with_single_oneof_without_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithoutTypeObject"
+
+    ComponentCommon:
+      description: "ComponentCommon"
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        common:
+          type: string
+
+    ComponentCommon2:
+      description: "ComponentCommon2"
+      type: object
+      properties:
+        common2:
+          type: string
+
+    Component1:
+      description: "Component1"
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - $ref: "#/components/schemas/ComponentCommon2"
+        - type: object
+          description: "Component1Self"
+          properties:
+            one:
+              type: string
+      properties:
+        anotherOne:
+          type: string
+
+    Component2:
+      description: "Component2"
+      type: object
+      required:
+        - objectType
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - $ref: "#/components/schemas/ComponentCommon2"
+        - type: object
+          description: "Component2Self"
+          properties:
+            two:
+              type: string
+      properties:
+        anotherTwo:
+          type: string
+""");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        // Verify both scenarios have all the properties available from all schemas
+        var withObjectClass = codeModel.FindChildByName<CodeClass>("ExampleWithSingleOneOfWithTypeObject");
+        Assert.NotNull(withObjectClass);
+        var withObjectClassOneProperty = withObjectClass.FindChildByName<CodeProperty>("one", false);
+        Assert.NotNull(withObjectClassOneProperty);
+        var withObjectClassCommonProperty = withObjectClass.FindChildByName<CodeProperty>("common", false);
+        Assert.NotNull(withObjectClassCommonProperty);
+        var withObjectClassCommon2Property = withObjectClass.FindChildByName<CodeProperty>("common2", false);
+        Assert.NotNull(withObjectClassCommon2Property);
+        var withObjectClassObjectTypeProperty = withObjectClass.FindChildByName<CodeProperty>("objectType", false);
+        Assert.NotNull(withObjectClassObjectTypeProperty);
+        var withObjectClassAnotherOneProperty = withObjectClass.FindChildByName<CodeProperty>("anotherOne", false);
+        Assert.NotNull(withObjectClassAnotherOneProperty);
+
+        var withoutObjectClass = codeModel.FindChildByName<CodeClass>("Component2");
+        Assert.NotNull(withoutObjectClass);
+        var withoutObjectClassTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("two", false);
+        Assert.NotNull(withoutObjectClassTwoProperty);
+        var withoutObjectClassCommonProperty = withoutObjectClass.FindChildByName<CodeProperty>("common", false);
+        Assert.NotNull(withoutObjectClassCommonProperty);
+        var withoutObjectClassCommon2Property = withoutObjectClass.FindChildByName<CodeProperty>("common2", false);
+        Assert.NotNull(withoutObjectClassCommon2Property);
+        var withoutObjectClassObjectTypeProperty = withoutObjectClass.FindChildByName<CodeProperty>("objectType", false);
+        Assert.NotNull(withoutObjectClassObjectTypeProperty);
+        var withoutObjectClassClassAnotherTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("anotherTwo", false);
+        Assert.NotNull(withoutObjectClassClassAnotherTwoProperty);
+    }
+
+    [Fact]
+    public async Task InclusiveUnionSingleEntriesMergingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(
+"""
+openapi: 3.0.0
+info:
+  title: "Generator not generating anyOf if the containing schema has type: object"
+  version: "1.0.0"
+servers:
+  - url: https://mytodos.doesnotexist/
+paths:
+  /uses-components:
+    post:
+      description: Return something
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsesComponents"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsesComponents"
+components:
+  schemas:
+    ExampleWithSingleOneOfWithTypeObject:
+      type: object
+      anyOf:
+        - $ref: "#/components/schemas/Component1"
+      discriminator:
+        propertyName: objectType
+    ExampleWithSingleOneOfWithoutTypeObject:
+      anyOf:
+        - $ref: "#/components/schemas/Component2"
+      discriminator:
+        propertyName: objectType
+
+    UsesComponents:
+      type: object
+      properties:
+        component_with_single_oneof_with_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithTypeObject"
+        component_with_single_oneof_without_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithoutTypeObject"
+
+    Component1:
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        one:
+          type: string
+
+    Component2:
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        two:
+          type: string
+""");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        // Verify that all three classes referenced by the discriminator inherit from baseDirectoryObject
+        var withObjectClass = codeModel.FindChildByName<CodeClass>("ExampleWithSingleOneOfWithTypeObject");
+        Assert.NotNull(withObjectClass);
+        var oneProperty = withObjectClass.FindChildByName<CodeProperty>("one", false);
+        Assert.NotNull(oneProperty);
+
+        var withoutObjectClass = codeModel.FindChildByName<CodeClass>("Component2");
+        Assert.NotNull(withObjectClass);
+        var twoProperty = withoutObjectClass.FindChildByName<CodeProperty>("two", false);
+        Assert.NotNull(twoProperty);
+    }
+
+    [Fact]
+    public async Task InclusiveUnionInheritanceEntriesMergingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(
+"""
+openapi: 3.0.0
+info:
+  title: "Generator not generating oneOf if the containing schema has type: object"
+  version: "1.0.0"
+servers:
+  - url: https://mytodos.doesnotexist/
+paths:
+  /uses-components:
+    post:
+      description: Return something
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsesComponents"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsesComponents"
+components:
+  schemas:
+    ExampleWithSingleOneOfWithTypeObject:
+      description: "ExampleWithSingleOneOfWithTypeObject"
+      type: object
+      anyOf:
+        - $ref: "#/components/schemas/Component1"
+      discriminator:
+        propertyName: objectType
+
+    ExampleWithSingleOneOfWithoutTypeObject:
+      description: "ExampleWithSingleOneOfWithoutTypeObject"
+      anyOf:
+        - $ref: "#/components/schemas/Component2"
+      discriminator:
+        propertyName: objectType
+
+    UsesComponents:
+      type: object
+      properties:
+        component_with_single_oneof_with_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithTypeObject"
+        component_with_single_oneof_without_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithoutTypeObject"
+
+    ComponentCommon:
+      description: "ComponentCommon"
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        common:
+          type: string
+
+    Component1:
+      description: "Component1"
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - type: object
+          description: "Component1Inner"
+          properties:
+            one:
+              type: string
+      properties:
+        anotherOne:
+          type: string
+
+    Component2:
+      description: "Component2"
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - type: object
+          description: "Component2Inner"
+          properties:
+            two:
+              type: string
+      properties:
+        anotherTwo:
+          type: string
+""");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        // Verify that all three classes referenced by the discriminator inherit from baseDirectoryObject
+        var withObjectClass = codeModel.FindChildByName<CodeClass>("ExampleWithSingleOneOfWithTypeObject");
+        Assert.NotNull(withObjectClass);
+        // ExampleWithSingleOneOfWithTypeObject inherits from ComponentCommon
+        Assert.Equal("ComponentCommon", withObjectClass.BaseClass?.Name);
+        var withObjectClassOneProperty = withObjectClass.FindChildByName<CodeProperty>("one", false);
+        Assert.NotNull(withObjectClassOneProperty);
+        var withObjectClassAnotherOneProperty = withObjectClass.FindChildByName<CodeProperty>("anotherOne", false);
+        Assert.NotNull(withObjectClassAnotherOneProperty);
+
+        var withoutObjectClass = codeModel.FindChildByName<CodeClass>("Component2");
+        Assert.NotNull(withoutObjectClass);
+        // Component2 inherits from ComponentCommon
+        Assert.Equal("ComponentCommon", withoutObjectClass.BaseClass?.Name);
+        var withoutObjectClassTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("two", false);
+        Assert.NotNull(withoutObjectClassTwoProperty);
+        var withoutObjectClassClassAnotherTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("anotherTwo", false);
+        Assert.NotNull(withoutObjectClassClassAnotherTwoProperty);
+    }
+
+    [Fact]
+    public async Task InclusiveUnionIntersectionEntriesMergingAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(
+"""
+openapi: 3.0.0
+info:
+  title: "Generator not generating oneOf if the containing schema has type: object"
+  version: "1.0.0"
+servers:
+  - url: https://mytodos.doesnotexist/
+paths:
+  /uses-components:
+    post:
+      description: Return something
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsesComponents"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsesComponents"
+components:
+  schemas:
+    ExampleWithSingleOneOfWithTypeObject:
+      description: "ExampleWithSingleOneOfWithTypeObject"
+      type: object
+      anyOf:
+        - $ref: "#/components/schemas/Component1"
+      discriminator:
+        propertyName: objectType
+
+    ExampleWithSingleOneOfWithoutTypeObject:
+      description: "ExampleWithSingleOneOfWithoutTypeObject"
+      anyOf:
+        - $ref: "#/components/schemas/Component2"
+      discriminator:
+        propertyName: objectType
+
+    UsesComponents:
+      type: object
+      properties:
+        component_with_single_oneof_with_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithTypeObject"
+        component_with_single_oneof_without_type_object:
+          $ref: "#/components/schemas/ExampleWithSingleOneOfWithoutTypeObject"
+
+    ComponentCommon:
+      description: "ComponentCommon"
+      type: object
+      required:
+        - objectType
+      properties:
+        objectType:
+          type: string
+        common:
+          type: string
+
+    ComponentCommon2:
+      description: "ComponentCommon2"
+      type: object
+      properties:
+        common2:
+          type: string
+
+    Component1:
+      description: "Component1"
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - $ref: "#/components/schemas/ComponentCommon2"
+        - type: object
+          description: "Component1Self"
+          properties:
+            one:
+              type: string
+      properties:
+        anotherOne:
+          type: string
+
+    Component2:
+      description: "Component2"
+      type: object
+      required:
+        - objectType
+      allOf:
+        - $ref: "#/components/schemas/ComponentCommon"
+        - $ref: "#/components/schemas/ComponentCommon2"
+        - type: object
+          description: "Component2Self"
+          properties:
+            two:
+              type: string
+      properties:
+        anotherTwo:
+          type: string
+""");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+
+        // Verify both scenarios have all the properties available from all schemas
+        var withObjectClass = codeModel.FindChildByName<CodeClass>("ExampleWithSingleOneOfWithTypeObject");
+        Assert.NotNull(withObjectClass);
+        var withObjectClassOneProperty = withObjectClass.FindChildByName<CodeProperty>("one", false);
+        Assert.NotNull(withObjectClassOneProperty);
+        var withObjectClassCommonProperty = withObjectClass.FindChildByName<CodeProperty>("common", false);
+        Assert.NotNull(withObjectClassCommonProperty);
+        var withObjectClassCommon2Property = withObjectClass.FindChildByName<CodeProperty>("common2", false);
+        Assert.NotNull(withObjectClassCommon2Property);
+        var withObjectClassObjectTypeProperty = withObjectClass.FindChildByName<CodeProperty>("objectType", false);
+        Assert.NotNull(withObjectClassObjectTypeProperty);
+        var withObjectClassAnotherOneProperty = withObjectClass.FindChildByName<CodeProperty>("anotherOne", false);
+        Assert.NotNull(withObjectClassAnotherOneProperty);
+
+        var withoutObjectClass = codeModel.FindChildByName<CodeClass>("Component2");
+        Assert.NotNull(withoutObjectClass);
+        var withoutObjectClassTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("two", false);
+        Assert.NotNull(withoutObjectClassTwoProperty);
+        var withoutObjectClassCommonProperty = withoutObjectClass.FindChildByName<CodeProperty>("common", false);
+        Assert.NotNull(withoutObjectClassCommonProperty);
+        var withoutObjectClassCommon2Property = withoutObjectClass.FindChildByName<CodeProperty>("common2", false);
+        Assert.NotNull(withoutObjectClassCommon2Property);
+        var withoutObjectClassObjectTypeProperty = withoutObjectClass.FindChildByName<CodeProperty>("objectType", false);
+        Assert.NotNull(withoutObjectClassObjectTypeProperty);
+        var withoutObjectClassClassAnotherTwoProperty = withoutObjectClass.FindChildByName<CodeProperty>("anotherTwo", false);
+        Assert.NotNull(withoutObjectClassClassAnotherTwoProperty);
+    }
+
+    [Fact]
+    public async Task NestedIntersectionTypeAllOfAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.3
+info:
+  title: Model Registry REST API
+  version: v1alpha2
+  description: REST API for Model Registry to create and manage ML model metadata
+  license:
+    name: Apache 2.0
+    url: 'https://www.apache.org/licenses/LICENSE-2.0'
+servers:
+  - url: 'https://localhost:8080'
+  - url: 'http://localhost:8080'
+paths:
+  /api/model_registry/v1alpha2/registered_models:
+    summary: Path used to manage the list of registeredmodels.
+    description: >-
+      The REST endpoint/path used to list and create zero or more `RegisteredModel` entities.  This path contains a `GET` and `POST` operation to perform the list and create tasks, respectively.
+    get:
+      responses:
+        '200':
+          $ref: '#/components/responses/RegisteredModelListResponse'
+      summary: List All RegisteredModels
+      description: Gets a list of all `RegisteredModel` entities.
+components:
+  schemas:
+    BaseResource:
+      type: object
+      properties:
+        id:
+          format: int64
+          description: Output only. The unique server generated id of the resource.
+          type: number
+          readOnly: true
+      allOf:
+        - $ref: '#/components/schemas/BaseResourceCreate'
+    BaseResourceCreate:
+      type: object
+      properties:
+        name:
+          description: |-
+            The client provided name of the artifact. This field is optional. If set,
+            it must be unique among all the artifacts of the same artifact type within
+            a database instance and cannot be changed once set.
+          type: string
+    BaseResourceList:
+      required:
+        - size
+      type: object
+      properties:
+        size:
+          format: int32
+          description: Number of items in result list.
+          type: integer
+    RegisteredModel:
+      description: A registered model in model registry. A registered model has ModelVersion children.
+      allOf:
+        - $ref: '#/components/schemas/BaseResource'
+        - $ref: '#/components/schemas/RegisteredModelCreate'
+    RegisteredModelCreate:
+      description: A registered model in model registry. A registered model has ModelVersion children.
+      allOf:
+        - $ref: '#/components/schemas/BaseResourceCreate'
+    RegisteredModelList:
+      description: List of RegisteredModels.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/BaseResourceList'
+        - type: object
+          properties:
+            items:
+              description: ''
+              type: array
+              items:
+                $ref: '#/components/schemas/RegisteredModel'
+              readOnly: false
+  responses:
+    RegisteredModelListResponse:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RegisteredModelList'
+      description: A response containing a list of `RegisteredModel` entities.\");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var registeredModelClass = codeModel.FindChildByName<CodeClass>("RegisteredModel");
+        Assert.Null(registeredModelClass.StartBlock.Inherits);
+        Assert.NotNull(registeredModelClass);
+        Assert.Single(registeredModelClass.Properties, static x => x.Kind is CodePropertyKind.AdditionalData);
+        Assert.Single(registeredModelClass.Properties, static x => x.Name.Equals("name", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(registeredModelClass.Properties, static x => x.Name.Equals("id", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
+    public async Task InheritanceWithAllOfWith3Parts3SchemaParentClassAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  /directoryObject:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.directoryObject'
+  /group:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.group'
+components:
+  schemas:
+    microsoft.graph.directoryObject:
+      required: ['@odata.type']
+      properties:
+        '@odata.type':
+          type: 'string'
+          default: '#microsoft.graph.directoryObject'
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObjectFacet1'
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObjectFacet2'
+      discriminator:
+        propertyName: '@odata.type'
+        mapping:
+          '#microsoft.graph.group': '#/components/schemas/microsoft.graph.group'
+    microsoft.graph.directoryObjectFacet1:
+      properties:
+        facetprop1:
+          type: 'string'
+    microsoft.graph.directoryObjectFacet2:
+      properties:
+        facetprop2:
+          type: 'string'
+    microsoft.graph.group:
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObject'
+      properties:
+        groupprop1:
+          type: 'string'");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var directoryObjectClass = codeModel.FindChildByName<CodeClass>("DirectoryObject");
+        Assert.NotNull(directoryObjectClass);
+        Assert.Null(directoryObjectClass.StartBlock.Inherits);
+        Assert.Single(directoryObjectClass.Properties, static x => x.Kind is CodePropertyKind.AdditionalData);
+        Assert.Single(directoryObjectClass.Properties, static x => x.Name.Equals("oDataType", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(directoryObjectClass.Properties, static x => x.Name.Equals("facetprop1", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(directoryObjectClass.Properties, static x => x.Name.Equals("facetprop2", StringComparison.OrdinalIgnoreCase));
+        var groupClass = codeModel.FindChildByName<CodeClass>("Group");
+        Assert.NotNull(groupClass);
+        Assert.Single(groupClass.Properties);
+        Assert.NotNull(groupClass.StartBlock.Inherits);
+        Assert.DoesNotContain(groupClass.Properties, static x => x.Kind is CodePropertyKind.AdditionalData);
+        Assert.DoesNotContain(groupClass.Properties, static x => x.Name.Equals("oDataType", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(groupClass.Properties, static x => x.Name.Equals("facetprop1", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(groupClass.Properties, static x => x.Name.Equals("facetprop2", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(groupClass.Properties, static x => x.Name.Equals("groupprop1", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
+    public async Task InheritanceWithAllOfWith2Parts1Schema1InlineNoDiscriminatorAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  /group:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.group'
 components:
   schemas:
     microsoft.graph.directoryObject:
@@ -7126,23 +9428,14 @@ components:
         '@odata.type':
           type: 'string'
           default: '#microsoft.graph.directoryObject'
-      discriminator:
-        propertyName: '@odata.type'
-        mapping:
-          '#microsoft.graph.user': '#/components/schemas/microsoft.graph.user'
-          '#microsoft.graph.group': '#/components/schemas/microsoft.graph.group'
     microsoft.graph.group:
+      type: 'object'
       allOf:
         - '$ref': '#/components/schemas/microsoft.graph.directoryObject'
         - title: 'group part 1'
           type: 'object'
           properties:
             groupprop1:
-              type: 'string'
-        - title: 'group part 2'
-          type: 'object'
-          properties:
-            groupprop2:
               type: 'string'");
         var mockLogger = new Mock<ILogger<KiotaBuilder>>();
         var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
@@ -7151,15 +9444,296 @@ components:
         var codeModel = builder.CreateSourceModel(node);
         var resultClass = codeModel.FindChildByName<CodeClass>("Group");
         Assert.NotNull(resultClass);
-        Assert.Equal(2, resultClass.Properties.Count());
-        Assert.Single(resultClass.Properties.Where(x => x.Name.Equals("groupprop1", StringComparison.OrdinalIgnoreCase)));
-        Assert.Single(resultClass.Properties.Where(x => x.Name.Equals("groupprop2", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal("directoryObject", resultClass.StartBlock.Inherits?.Name, StringComparer.OrdinalIgnoreCase);
+        Assert.Single(resultClass.Properties);
+        Assert.Single(resultClass.Properties, static x => x.Name.Equals("groupprop1", StringComparison.OrdinalIgnoreCase));
     }
     [Fact]
-    public async Task AnyTypeResponse()
+    public async Task InheritanceWithAllOfWith1Part1SchemaAndPropertiesNoDiscriminatorAsync()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
-        await using var fs = await GetDocumentStream(@"openapi: 3.0.1
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  /group:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.group'
+components:
+  schemas:
+    microsoft.graph.directoryObject:
+      title: 'directoryObject'
+      required: ['@odata.type']
+      type: 'object'
+      properties:
+        '@odata.type':
+          type: 'string'
+          default: '#microsoft.graph.directoryObject'
+    microsoft.graph.group:
+      allOf:
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObject'
+      type: 'object'
+      properties:
+        groupprop1:
+          type: 'string'");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var resultClass = codeModel.FindChildByName<CodeClass>("Group");
+        Assert.NotNull(resultClass);
+        Assert.Equal("directoryObject", resultClass.StartBlock.Inherits?.Name, StringComparer.OrdinalIgnoreCase);
+        Assert.Single(resultClass.Properties);
+        Assert.Single(resultClass.Properties, static x => x.Name.Equals("groupprop1", StringComparison.OrdinalIgnoreCase));
+    }
+    [InlineData(true)]
+    [InlineData(false)]
+    [Theory]
+    public async Task InheritanceWithAllOfWith3Parts1Schema2InlineAsync(bool reverseOrder)
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  /directoryObject:
+    get:
+      responses: 
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/microsoft.graph.directoryObject'
+components:
+  schemas:
+    microsoft.graph.directoryObject:
+      required: ['@odata.type']
+      properties:
+        '@odata.type':
+          type: 'string'
+          default: '#microsoft.graph.directoryObject'
+      discriminator:
+        propertyName: '@odata.type'
+        mapping:
+          '#microsoft.graph.group': '#/components/schemas/microsoft.graph.group'
+    microsoft.graph.group:
+      allOf:"
+       + (reverseOrder ? "" : @"
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObject'") + @"
+        - properties:
+            groupprop1:
+              type: 'string'
+        - properties:
+            groupprop2:
+              type: 'string'" + (!reverseOrder ? "" : @"
+        - '$ref': '#/components/schemas/microsoft.graph.directoryObject'"));
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var resultClass = codeModel.FindChildByName<CodeClass>("Group");
+        Assert.NotNull(resultClass);
+        Assert.Equal("directoryObject", resultClass.StartBlock.Inherits?.Name, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(2, resultClass.Properties.Count());
+        Assert.DoesNotContain(resultClass.Properties, static x => x.Name.Equals("oDataType", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(resultClass.Properties, static x => x.Name.Equals("groupprop1", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(resultClass.Properties, static x => x.Name.Equals("groupprop2", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
+    public async Task InheritanceWithoutObjectTypeHasAllPropertiesAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.3
+servers:
+  - url: 'https://example.com'
+info:
+  title: example
+  version: 0.0.1
+paths:
+  /path:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/outerPayload'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: string
+
+components:
+  schemas:
+    outerPayload:
+      allOf:
+        - $ref: '#/components/schemas/innerPayload'
+        - properties:
+            someField:
+              type: string
+    innerPayload:
+      properties:
+        anotherField:
+          type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        var outerPayloadClass = codeModel.FindChildByName<CodeClass>("outerPayload");
+        Assert.NotNull(outerPayloadClass);
+        Assert.Equal("innerPayload", outerPayloadClass.StartBlock.Inherits?.Name, StringComparer.OrdinalIgnoreCase);
+        Assert.Single(outerPayloadClass.Properties);
+        Assert.Single(outerPayloadClass.Properties, static x => x.Name.Equals("someField", StringComparison.OrdinalIgnoreCase));
+    }
+    [Fact]
+    public async Task EnumsWithNullableDoesNotResultInInlineTypeAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  '/communications/calls/{call-id}/reject':
+    post:
+      requestBody:
+        description: Action parameters
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  anyOf:
+                    - $ref: '#/components/schemas/microsoft.graph.rejectReason'
+                    - type: object
+                      nullable: true
+                callbackUri:
+                  type: string
+                  nullable: true
+        required: true
+      responses:
+        '204':
+          description: Success,
+components:
+  schemas:
+    microsoft.graph.rejectReason:
+      title: rejectReason
+      enum:
+        - none
+        - busy
+        - forbidden
+        - unknownFutureValue
+      type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, IncludeAdditionalData = false }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var requestBuilderNS = codeModel.FindNamespaceByName("ApiSdk.communications.calls.item.reject");
+        Assert.NotNull(requestBuilderNS);
+        var requestBuilderClass = requestBuilderNS.FindChildByName<CodeClass>("RejectRequestBuilder", false);
+        Assert.NotNull(requestBuilderClass);
+        var reasonCandidate = requestBuilderNS.FindChildByName<CodeEnum>("RejectPostRequestBody_reason", false);
+        Assert.Null(reasonCandidate);
+        var modelsNS = codeModel.FindNamespaceByName("ApiSdk.Models");
+        Assert.NotNull(modelsNS);
+        var graphModelsNS = modelsNS.FindNamespaceByName("ApiSdk.Models.Microsoft.Graph");
+        Assert.NotNull(graphModelsNS);
+        var rejectReasonEnum = graphModelsNS.FindChildByName<CodeEnum>("RejectReason", false);
+        Assert.NotNull(rejectReasonEnum);
+    }
+
+    [Fact]
+    public async Task EnumsWithNullableDoesNotResultInInlineTypeInReveredOrderAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
+info:
+  title: OData Service for namespace microsoft.graph
+  description: This OData service is located at https://graph.microsoft.com/v1.0
+  version: 1.0.1
+servers:
+  - url: https://graph.microsoft.com/v1.0
+paths:
+  '/communications/calls/{call-id}/reject':
+    post:
+      requestBody:
+        description: Action parameters
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  anyOf:
+                    - type: object
+                      nullable: true
+                    - $ref: '#/components/schemas/microsoft.graph.rejectReason'
+                callbackUri:
+                  type: string
+                  nullable: true
+        required: true
+      responses:
+        '204':
+          description: Success,
+components:
+  schemas:
+    microsoft.graph.rejectReason:
+      title: rejectReason
+      enum:
+        - none
+        - busy
+        - forbidden
+        - unknownFutureValue
+      type: string");
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration { ClientClassName = "Graph", OpenAPIFilePath = tempFilePath, IncludeAdditionalData = false }, _httpClient);
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var requestBuilderNS = codeModel.FindNamespaceByName("ApiSdk.communications.calls.item.reject");
+        Assert.NotNull(requestBuilderNS);
+        var requestBuilderClass = requestBuilderNS.FindChildByName<CodeClass>("RejectRequestBuilder", false);
+        Assert.NotNull(requestBuilderClass);
+        var reasonCandidate = requestBuilderNS.FindChildByName<CodeEnum>("RejectPostRequestBody_reason", false);
+        Assert.Null(reasonCandidate);
+        var modelsNS = codeModel.FindNamespaceByName("ApiSdk.Models");
+        Assert.NotNull(modelsNS);
+        var graphModelsNS = modelsNS.FindNamespaceByName("ApiSdk.Models.Microsoft.Graph");
+        Assert.NotNull(graphModelsNS);
+        var rejectReasonEnum = graphModelsNS.FindChildByName<CodeEnum>("RejectReason", false);
+        Assert.NotNull(rejectReasonEnum);
+    }
+
+    [Fact]
+    public async Task AnyTypeResponseAsync()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(@"openapi: 3.0.1
 info:
   title: The Jira Cloud platform REST API
 externalDocs:
@@ -7293,4 +9867,581 @@ components:
         var linkIssueRequestJsonBeanClass = codeModel.FindChildByName<CodeClass>("LinkIssueRequestJsonBean");
         Assert.NotNull(linkIssueRequestJsonBeanClass);
     }
+
+    [Fact]
+    public async Task EnumArrayQueryParameterAsync()
+    {
+        const string schemaDocument = """
+                     openapi: 3.0.2
+                     info:
+                       title: Enum
+                       version: 1.0.0
+                     paths:
+                       /EnumQuery:
+                         get:
+                           parameters:
+                             - name: enumValues
+                               in: query
+                               schema:
+                                 type: array
+                                 items:
+                                   $ref: '#/components/schemas/EnumValue'
+                             - name: enumValues2
+                               in: query
+                               schema:
+                                 $ref: '#/components/schemas/EnumValue'
+                           responses:
+                             '200':
+                               description: response
+                               content:
+                                 application/json:
+                                   schema:
+                                     $ref: '#/components/schemas/EnumObject'
+                     components:
+                       schemas:
+                         EnumValue:
+                           type: string
+                           enum:
+                             - Value1
+                             - Value2
+                             - Value3
+                         EnumObject:
+                           type: object
+                           properties:
+                             enumArray:
+                               type: array
+                               items:
+                                 $ref: '#/components/schemas/EnumValue'
+                     """;
+
+        var tempFilePath = Path.Combine(Path.GetTempPath(), Path.GetTempFileName());
+        await using var fs = await GetDocumentStreamAsync(schemaDocument);
+
+        var builder = new KiotaBuilder(
+            NullLogger<KiotaBuilder>.Instance,
+            new GenerationConfiguration
+            {
+                ClientClassName = "EnumTest",
+                OpenAPIFilePath = tempFilePath,
+                IncludeAdditionalData = false
+            },
+            _httpClient);
+
+        var document = await builder.CreateOpenApiDocumentAsync(fs);
+        Assert.NotNull(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.NotNull(codeModel);
+        var enumRequestBuilder = codeModel.FindChildByName<CodeClass>("EnumQueryRequestBuilder");
+        Assert.NotNull(enumRequestBuilder);
+        var queryParameters = enumRequestBuilder.FindChildByName<CodeClass>("EnumQueryRequestBuilderGetQueryParameters");
+        Assert.NotNull(queryParameters);
+
+        Assert.Contains(queryParameters.Properties, p =>
+            p.Type is
+            {
+                IsCollection: true,
+                IsArray: true,
+                CollectionKind: CodeTypeBase.CodeTypeCollectionKind.Array,
+                Name: "EnumValue"
+            });
+    }
+    [Fact]
+    public void SupportsIncludeFilterAndExcludeWithOperation()
+    {
+        var myObjectSchema = new OpenApiSchema
+        {
+            Type = "object",
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "name", new OpenApiSchema {
+                        Type = "string",
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "myobject",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false,
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["directory/administrativeUnits"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        [OperationType.Post] = new OpenApiOperation
+                        {
+                            RequestBody = new OpenApiRequestBody {
+                                Content = {
+                                    ["application/json"] = new OpenApiMediaType {
+                                        Schema = myObjectSchema
+                                    }
+                                }
+                            },
+                            Responses = new OpenApiResponses
+                            {
+                                ["201"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                },
+                ["directory/administrativeUnits/{id}"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        [OperationType.Patch] = new OpenApiOperation
+                        {
+                            RequestBody = new OpenApiRequestBody {
+                                Content = {
+                                    ["application/json"] = new OpenApiMediaType {
+                                        Schema = myObjectSchema
+                                    }
+                                }
+                            },
+                            Responses = new OpenApiResponses
+                            {
+                                ["204"] = new OpenApiResponse()
+                            }
+                        },
+                        [OperationType.Delete] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["204"] = new OpenApiResponse()
+                            }
+                        }
+                    }
+                }
+            },
+            Components = new()
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "myobject", myObjectSchema
+                    }
+                }
+            }
+        };
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration
+        {
+            ClientClassName = "TestClient",
+            ClientNamespaceName = "TestSdk",
+            ApiRootUrl = "https://localhost",
+            IncludePatterns = new() {
+                "directory/administrativeUnits",
+                "directory/administrativeUnits/**"
+            },
+            ExcludePatterns = new()
+            {
+                "directory/administrativeUnits/**#DELETE"
+            }
+        }, _httpClient);
+        builder.FilterPathsByPatterns(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.Null(codeModel.FindNamespaceByName("TestSdk.groups"));
+        var administrativeUnitsNS = codeModel.FindNamespaceByName("TestSdk.directory.administrativeUnits");
+        Assert.NotNull(administrativeUnitsNS);
+        var administrativeUnitsRS = administrativeUnitsNS.FindChildByName<CodeClass>("AdministrativeUnitsRequestBuilder");
+        Assert.NotNull(administrativeUnitsRS);
+        Assert.Single(administrativeUnitsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Post);
+        Assert.Single(administrativeUnitsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Get);
+        Assert.DoesNotContain(administrativeUnitsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Put);
+        var administrativeUnitsItemsNS = codeModel.FindNamespaceByName("TestSdk.directory.administrativeUnits.item");
+        Assert.NotNull(administrativeUnitsItemsNS);
+        var administrativeUnitItemsRS = administrativeUnitsItemsNS.FindChildByName<CodeClass>("AdministrativeUnitsItemRequestBuilder");
+        Assert.NotNull(administrativeUnitItemsRS);
+        Assert.Single(administrativeUnitItemsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Get);
+        Assert.Single(administrativeUnitItemsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Patch);
+        Assert.DoesNotContain(administrativeUnitItemsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Delete);
+    }
+    [Fact]
+    public void SupportsIncludeFilterAndExcludeWithOperationForSpecificPath()
+    {
+        var myObjectSchema = new OpenApiSchema
+        {
+            Type = "object",
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "name", new OpenApiSchema {
+                        Type = "string",
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "myobject",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false,
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["directory/administrativeUnits"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        [OperationType.Post] = new OpenApiOperation
+                        {
+                            RequestBody = new OpenApiRequestBody {
+                                Content = {
+                                    ["application/json"] = new OpenApiMediaType {
+                                        Schema = myObjectSchema
+                                    }
+                                }
+                            },
+                            Responses = new OpenApiResponses
+                            {
+                                ["201"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                },
+                ["directory/administrativeUnits/{id}"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        [OperationType.Patch] = new OpenApiOperation
+                        {
+                            RequestBody = new OpenApiRequestBody {
+                                Content = {
+                                    ["application/json"] = new OpenApiMediaType {
+                                        Schema = myObjectSchema
+                                    }
+                                }
+                            },
+                            Responses = new OpenApiResponses
+                            {
+                                ["204"] = new OpenApiResponse()
+                            }
+                        },
+                        [OperationType.Delete] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["204"] = new OpenApiResponse()
+                            }
+                        }
+                    }
+                }
+            },
+            Components = new()
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "myobject", myObjectSchema
+                    }
+                }
+            }
+        };
+        var mockLogger = new Mock<ILogger<KiotaBuilder>>();
+        var builder = new KiotaBuilder(mockLogger.Object, new GenerationConfiguration
+        {
+            ClientClassName = "TestClient",
+            ClientNamespaceName = "TestSdk",
+            ApiRootUrl = "https://localhost",
+            IncludePatterns = new() {
+                "directory/administrativeUnits",
+                "directory/administrativeUnits/**"
+            },
+            ExcludePatterns = new()
+            {
+                "directory/administrativeUnits/{id}#DELETE"
+            }
+        }, _httpClient);
+        builder.FilterPathsByPatterns(document);
+        var node = builder.CreateUriSpace(document);
+        var codeModel = builder.CreateSourceModel(node);
+        Assert.Null(codeModel.FindNamespaceByName("TestSdk.groups"));
+        var administrativeUnitsNS = codeModel.FindNamespaceByName("TestSdk.directory.administrativeUnits");
+        Assert.NotNull(administrativeUnitsNS);
+        var administrativeUnitsRS = administrativeUnitsNS.FindChildByName<CodeClass>("AdministrativeUnitsRequestBuilder");
+        Assert.NotNull(administrativeUnitsRS);
+        Assert.Single(administrativeUnitsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Post);
+        Assert.Single(administrativeUnitsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Get);
+        Assert.DoesNotContain(administrativeUnitsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Put);
+        var administrativeUnitsItemsNS = codeModel.FindNamespaceByName("TestSdk.directory.administrativeUnits.item");
+        Assert.NotNull(administrativeUnitsItemsNS);
+        var administrativeUnitItemsRS = administrativeUnitsItemsNS.FindChildByName<CodeClass>("AdministrativeUnitsItemRequestBuilder");
+        Assert.NotNull(administrativeUnitItemsRS);
+        Assert.Single(administrativeUnitItemsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Get);
+        Assert.Single(administrativeUnitItemsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Patch);
+        Assert.DoesNotContain(administrativeUnitItemsRS.Methods, static x => x.IsOfKind(CodeMethodKind.RequestExecutor) && x.HttpMethod == Builder.CodeDOM.HttpMethod.Delete);
+    }
+    [Fact]
+    public void CleansUpOperationIdAddsMissingOperationId()
+    {
+        var myObjectSchema = new OpenApiSchema
+        {
+            Type = "object",
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "name", new OpenApiSchema {
+                        Type = "string",
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "myobject",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false,
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["directory/administrativeUnits"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        [OperationType.Post] = new OpenApiOperation
+                        {
+                            RequestBody = new OpenApiRequestBody {
+                                Content = {
+                                    ["application/json"] = new OpenApiMediaType {
+                                        Schema = myObjectSchema
+                                    }
+                                }
+                            },
+                            Responses = new OpenApiResponses
+                            {
+                                ["201"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+            },
+            Components = new()
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "myobject", myObjectSchema
+                    }
+                }
+            }
+        };
+        KiotaBuilder.CleanupOperationIdForPlugins(document);
+        var operations = document.Paths.SelectMany(path => path.Value.Operations).ToList();
+        foreach (var path in operations)
+        {
+            Assert.False(string.IsNullOrEmpty(path.Value.OperationId)); //Assert that the operationId is not empty
+            Assert.EndsWith(path.Key.ToString().ToLowerInvariant(), path.Value.OperationId);// assert that the operationId ends with the operation type
+            Assert.Matches(OperationIdValidationRegex(), path.Value.OperationId); // assert that the operationId is clean an matches the regex
+        }
+        Assert.Equal("directory_administrativeunits_get", operations[0].Value.OperationId);
+        Assert.Equal("directory_administrativeunits_post", operations[1].Value.OperationId);
+    }
+
+    [Theory]
+    [InlineData("repos/{id}/", "repos/{*}/")] // normalish case
+    [InlineData("repos/{id}", "repos/{*}")]// no trailing slash
+    [InlineData("/repos/{id}", "/repos/{*}")]// no trailing slash(slash at begining).
+    [InlineData("repos/{id}/dependencies/{dep-id}", "repos/{*}/dependencies/{*}")]// multiple indexers
+    [InlineData("/repos/{id}/dependencies/{dep-id}/", "/repos/{*}/dependencies/{*}/")]// multiple indexers(slash at begining and end).
+    [InlineData("/repos/{id}/dependencies/{dep-id}", "/repos/{*}/dependencies/{*}")]// multiple indexers(slash at begining).
+    [InlineData("repos/{id}/{dep-id}", "repos/{*}/{*}")]// indexers following each other.
+    [InlineData("/repos/{id}/{dep-id}", "/repos/{*}/{*}")]// indexers following each other(slash at begining).
+    [InlineData("repos/msft", "repos/msft")]// no indexers
+    [InlineData("/repos", "/repos")]// no indexers(slash at begining).
+    [InlineData("repos", "repos")]// no indexers
+    public void ReplacesAllIndexesWithWildcard(string inputPath, string expectedGlob)
+    {
+        var resultGlob = KiotaBuilder.ReplaceAllIndexesWithWildcard(inputPath);
+        Assert.Equal(expectedGlob, resultGlob);
+    }
+
+    [Fact]
+    public void CleansUpOperationIdChangesOperationId()
+    {
+        var myObjectSchema = new OpenApiSchema
+        {
+            Type = "object",
+            Properties = new Dictionary<string, OpenApiSchema> {
+                {
+                    "name", new OpenApiSchema {
+                        Type = "string",
+                    }
+                }
+            },
+            Reference = new OpenApiReference
+            {
+                Id = "myobject",
+                Type = ReferenceType.Schema
+            },
+            UnresolvedReference = false,
+        };
+        var document = new OpenApiDocument
+        {
+            Paths = new OpenApiPaths
+            {
+                ["directory/administrativeUnits"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            },
+                            OperationId = "GetAdministrativeUnits" // Nothing wrong with this operationId
+                        },
+                        [OperationType.Post] = new OpenApiOperation
+                        {
+                            RequestBody = new OpenApiRequestBody {
+                                Content = {
+                                    ["application/json"] = new OpenApiMediaType {
+                                        Schema = myObjectSchema
+                                    }
+                                }
+                            },
+                            Responses = new OpenApiResponses
+                            {
+                                ["201"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            },
+                            OperationId = "PostAdministrativeUnits.With201-response" // operationId should be cleaned up
+                        }
+                    }
+                },
+                ["directory/adminstativeUnits/{unit-id}"] = new OpenApiPathItem
+                {
+                    Operations = {
+                        [OperationType.Get] = new OpenApiOperation
+                        {
+                            Responses = new OpenApiResponses
+                            {
+                                ["200"] = new OpenApiResponse {
+                                    Content = {
+                                        ["application/json"] = new OpenApiMediaType {
+                                            Schema = myObjectSchema
+                                        }
+                                    }
+                                },
+                            },
+                            // OperationId is missing
+                        },
+                    }
+                }
+            },
+            Components = new()
+            {
+                Schemas = new Dictionary<string, OpenApiSchema> {
+                    {
+                        "myobject", myObjectSchema
+                    }
+                }
+            }
+        };
+        KiotaBuilder.CleanupOperationIdForPlugins(document);
+        var operations = document.Paths.SelectMany(path => path.Value.Operations).ToList();
+        foreach (var path in operations)
+        {
+            Assert.False(string.IsNullOrEmpty(path.Value.OperationId)); //Assert that the operationId is not empty
+            Assert.Matches(OperationIdValidationRegex(), path.Value.OperationId); // assert that the operationId is clean an matches the regex
+        }
+        Assert.Equal("GetAdministrativeUnits", operations[0].Value.OperationId);
+        Assert.Equal("PostAdministrativeUnits_With201_response", operations[1].Value.OperationId);
+        Assert.Equal("directory_adminstativeunits_item_get", operations[2].Value.OperationId);
+    }
+    [GeneratedRegex(@"^[a-zA-Z0-9_]*$", RegexOptions.IgnoreCase | RegexOptions.Singleline, 2000)]
+    private static partial Regex OperationIdValidationRegex();
 }

@@ -10,7 +10,7 @@ using Kiota.Builder.Writers.Ruby;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Ruby;
-public class CodeMethodWriterTests : IDisposable
+public sealed class CodeMethodWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -525,6 +525,20 @@ public class CodeMethodWriterTests : IDisposable
         Assert.Contains("return request_info", result);
     }
     [Fact]
+    public void WritesRequestGeneratorBodyWhenUrlTemplateIsOverrode()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        method.AcceptedResponseTypes.Add("application/json");
+        AddRequestProperties();
+        AddRequestBodyParameters();
+        method.UrlTemplateOverride = "{baseurl+}/foo/bar";
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("request_info.url_template = '{baseurl+}/foo/bar'", result);
+    }
+    [Fact]
     public void WritesRequestGeneratorBodyKnownRequestBodyType()
     {
         setup();
@@ -704,13 +718,13 @@ public class CodeMethodWriterTests : IDisposable
     public void WritesMethodSyncDescription()
     {
         setup();
-        method.Documentation.Description = MethodDescription;
+        method.Documentation.DescriptionTemplate = MethodDescription;
         method.IsAsync = false;
         var parameter = new CodeParameter
         {
             Documentation = new()
             {
-                Description = ParamDescription,
+                DescriptionTemplate = ParamDescription,
             },
             Name = ParamName,
             Type = new CodeType
@@ -1059,5 +1073,32 @@ public class CodeMethodWriterTests : IDisposable
         var result = tw.ToString();
         Assert.DoesNotContain("ReadOnlyProperty", result);
         AssertExtensions.CurlyBracesAreClosed(result);
+    }
+
+    [Fact]
+    public void WritesRequestGeneratorAcceptHeaderQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Get;
+        AddRequestProperties();
+        method.AcceptedResponseTypes.Add("application/json; profile='CamelCase'");
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("request_info.headers.try_add('Accept', 'application/json; profile=\\'CamelCase\\'')", result);
+    }
+
+    [Fact]
+    public void WritesRequestGeneratorContentTypeQuotes()
+    {
+        setup();
+        method.Kind = CodeMethodKind.RequestGenerator;
+        method.HttpMethod = HttpMethod.Post;
+        AddRequestProperties();
+        AddRequestBodyParameters();
+        method.RequestBodyContentType = "application/json; profile='CamelCase'";
+        writer.Write(method);
+        var result = tw.ToString();
+        Assert.Contains("'application/json; profile=\\'CamelCase\\''", result);
     }
 }

@@ -13,12 +13,13 @@ namespace Kiota.Builder.Refiners;
 public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
 {
     public RubyRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             RemoveMethodByKind(generatedCode, CodeMethodKind.RawUrlConstructor);
+            DeduplicateErrorMappings(generatedCode);
             ReplaceIndexersByMethodsWithParameter(generatedCode,
                 false,
                 static x => $"by_{x.ToSnakeCase()}",
@@ -39,6 +40,10 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
             var suffix = "Model";
             DisambiguateClassesWithNamespaceNames(generatedCode, classesToDisambiguate, suffix);
             UpdateReferencesToDisambiguatedClasses(generatedCode, classesToDisambiguate, suffix);
+            ConvertUnionTypesToWrapper(generatedCode,
+                _configuration.UsesBackingStore,
+                static s => s
+            );
             var reservedNamesProvider = new RubyReservedNamesProvider();
             CorrectNames(generatedCode, s =>
             {
@@ -55,20 +60,17 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
                 FlattenModelsNamespaces(modelsNS, modelsNS);
             AddPropertiesAndMethodTypesImports(generatedCode, false, false, true);
             RemoveCancellationParameter(generatedCode);
-            ConvertUnionTypesToWrapper(generatedCode,
-                _configuration.UsesBackingStore,
-                static s => s
-            );
             cancellationToken.ThrowIfCancellationRequested();
             AddParsableImplementsForModelClasses(generatedCode, "MicrosoftKiotaAbstractions::Parsable");
             AddDefaultImports(generatedCode, defaultUsingEvaluators);
+            RemoveUntypedNodeTypeValues(generatedCode);
             CorrectCoreType(generatedCode, CorrectMethodType, CorrectPropertyType, CorrectImplements);
             cancellationToken.ThrowIfCancellationRequested();
             ReplacePropertyNames(generatedCode,
-                new() {
+                [
                     CodePropertyKind.Custom,
                     CodePropertyKind.QueryParameter,
-                },
+                ],
                 static s => s.ToSnakeCase());
             AddParentClassToErrorClasses(
                 generatedCode,
@@ -76,12 +78,13 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
                 "MicrosoftKiotaAbstractions",
                 true
             );
+            ReplaceReservedNames(generatedCode, reservedNamesProvider, x => $"{x}_escaped");
             AddGetterAndSetterMethods(generatedCode,
-                new() {
+                [
                     CodePropertyKind.Custom,
                     CodePropertyKind.AdditionalData,
                     CodePropertyKind.BackingStore,
-                },
+                ],
                 static (_, s) => s.ToSnakeCase(),
                 _configuration.UsesBackingStore,
                 true,
@@ -92,9 +95,8 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
                 generatedCode,
                 true,
                 false,
-                new[] { CodeClassKind.RequestConfiguration });
+                [CodeClassKind.RequestConfiguration]);
             ShortenLongNamespaceNames(generatedCode);
-            ReplaceReservedNames(generatedCode, reservedNamesProvider, x => $"{x}_escaped");
             if (generatedCode.FindNamespaceByName(_configuration.ClientNamespaceName)?.Parent is CodeNamespace parentOfClientNS)
                 AddNamespaceModuleImports(parentOfClientNS, generatedCode);
             var defaultConfiguration = new GenerationConfiguration();
@@ -110,9 +112,9 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
                 new(StringComparer.OrdinalIgnoreCase) {
                     "microsoft_kiota_serialization_json.JsonParseNodeFactory"});
             AddSerializationModulesImport(generatedCode,
-                                        new[] { "microsoft_kiota_abstractions.ApiClientBuilder",
-                                                "microsoft_kiota_abstractions.SerializationWriterFactoryRegistry" },
-                                        new[] { "microsoft_kiota_abstractions.ParseNodeFactoryRegistry" });
+                                        ["microsoft_kiota_abstractions.ApiClientBuilder",
+                                            "microsoft_kiota_abstractions.SerializationWriterFactoryRegistry"],
+                                        ["microsoft_kiota_abstractions.ParseNodeFactoryRegistry"]);
             AddQueryParameterMapperMethod(
                 generatedCode
             );
@@ -156,7 +158,7 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
     }
     private static void UpdateReferencesToDisambiguatedClasses(CodeElement currentElement, HashSet<CodeClass> classesToUpdate, string suffix)
     {
-        if (!classesToUpdate.Any()) return;
+        if (classesToUpdate.Count == 0) return;
         if (currentElement is CodeProperty currentProperty &&
             currentProperty.Type is CodeType propertyType &&
             propertyType.TypeDefinition is CodeClass propertyTypeClass &&
@@ -196,7 +198,7 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
         }
         CrawlTree(currentElement, x => UpdateReferencesToDisambiguatedClasses(x, classesToUpdate, suffix));
     }
-    [GeneratedRegex(@"\\.(<letter>\\w)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\\.(<letter>\\w)", RegexOptions.IgnoreCase | RegexOptions.Singleline, 500)]
     private static partial Regex CapitalizedFirstLetterAfterDot();
     private static void FlattenModelsNamespaces(CodeElement currentElement, CodeNamespace modelsNS)
     {
@@ -211,7 +213,7 @@ public partial class RubyRefiner : CommonLanguageRefiner, ILanguageRefiner
             else if (currentElement is CodeEnum currentEnum)
                 modelsNS.AddEnum(currentEnum);
         }
-        CrawlTree(currentElement, x => FlattenModelsNamespaces(x, modelsNS), true);
+        CrawlTree(currentElement, x => FlattenModelsNamespaces(x, modelsNS));
     }
     private static void CorrectMethodType(CodeMethod currentMethod)
     {

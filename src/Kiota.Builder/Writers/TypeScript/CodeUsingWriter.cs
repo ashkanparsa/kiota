@@ -26,7 +26,10 @@ public class CodeUsingWriter
                                                 .GroupBy(static x => x.Path)
                                                 .OrderBy(static x => x.Key);
         foreach (var codeUsing in importSymbolsAndPaths.Where(static x => !string.IsNullOrWhiteSpace(x.Key)))
+        {
+            writer.WriteLine("// @ts-ignore");
             writer.WriteLine($"import {{ {codeUsing.Select(static x => GetAliasedSymbol(x.Symbol, x.Alias, x.ShouldUseTypeImport)).Distinct().OrderBy(static x => x).Aggregate(static (x, y) => x + ", " + y)} }} from '{codeUsing.Key}';");
+        }
 
         writer.WriteLine();
     }
@@ -42,7 +45,7 @@ public class CodeUsingWriter
         if (codeUsing.Declaration is CodeType codeType)
         {
             if (codeType.TypeDefinition is CodeInterface) return true;
-            // this will handle endge cases for typescript Declarations that are already known to be interfaces: RequestConfiguration, QueryParameters, and Model classes
+            // this will handle edge cases for typescript Declarations that are already known to be interfaces: RequestConfiguration, QueryParameters, and Model classes
             if (codeType.TypeDefinition is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.RequestConfiguration, CodeClassKind.QueryParameters, CodeClassKind.Model)) return true;
         }
         return false;

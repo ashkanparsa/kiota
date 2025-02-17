@@ -1,14 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.CommandLine;
+﻿using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.CommandLine.IO;
 using System.CommandLine.Rendering;
 using System.CommandLine.Rendering.Views;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Kiota.Builder;
 using Kiota.Builder.Configuration;
 using Microsoft.Extensions.Logging;
@@ -45,6 +39,10 @@ internal class KiotaInfoCommandHandler : KiotaSearchBasedCommandHandler
     {
         get; init;
     }
+    public required Option<DependencyType[]> DependencyTypesOption
+    {
+        get; init;
+    }
 
     public override async Task<int> InvokeAsync(InvocationContext context)
     {
@@ -54,13 +52,14 @@ internal class KiotaInfoCommandHandler : KiotaSearchBasedCommandHandler
         string searchTerm = context.ParseResult.GetValueForOption(SearchTermOption) ?? string.Empty;
         string version = context.ParseResult.GetValueForOption(VersionOption) ?? string.Empty;
         bool json = context.ParseResult.GetValueForOption(JsonOption);
+        DependencyType[] dependencyTypes = context.ParseResult.GetValueForOption(DependencyTypesOption) ?? [];
         GenerationLanguage? language = context.ParseResult.GetValueForOption(GenerationLanguage);
         CancellationToken cancellationToken = context.BindingContext.GetService(typeof(CancellationToken)) is CancellationToken token ? token : CancellationToken.None;
         var (loggerFactory, logger) = GetLoggerAndFactory<KiotaBuilder>(context);
         Configuration.Search.ClearCache = clearCache;
         using (loggerFactory)
         {
-            await CheckForNewVersionAsync(logger, cancellationToken);
+            await CheckForNewVersionAsync(logger, cancellationToken).ConfigureAwait(false);
             if (!language.HasValue)
             {
                 ShowLanguagesTable();
@@ -78,7 +77,7 @@ internal class KiotaInfoCommandHandler : KiotaSearchBasedCommandHandler
                 openapi = searchResultDescription;
             }
 
-            Configuration.Generation.OpenAPIFilePath = openapi;
+            Configuration.Generation.OpenAPIFilePath = GetAbsolutePath(openapi);
             Configuration.Generation.ClearCache = clearCache;
             Configuration.Generation.Language = language.Value;
 
@@ -101,7 +100,7 @@ internal class KiotaInfoCommandHandler : KiotaSearchBasedCommandHandler
                     return 1;
 #endif
                 }
-            ShowLanguageInformation(language.Value, instructions, json);
+            ShowLanguageInformation(language.Value, instructions, json, dependencyTypes);
             return 0;
         }
     }
@@ -114,23 +113,45 @@ internal class KiotaInfoCommandHandler : KiotaSearchBasedCommandHandler
         };
         view.AddColumn(static x => x.Key, "Language");
         view.AddColumn(static x => x.Value.MaturityLevel.ToString(), "Maturity Level");
+        view.AddColumn(static x => x.Value.SupportExperience.ToString(), "Support Experience");
         var console = new SystemConsole();
         using var terminal = new SystemConsoleTerminal(console);
         var layout = new StackLayoutView { view };
         console.Append(layout);
     }
-    private void ShowLanguageInformation(GenerationLanguage language, LanguagesInformation informationSource, bool json)
+    private void ShowLanguageInformation(GenerationLanguage language, LanguagesInformation informationSource, bool json, DependencyType[] dependencyTypes)
     {
         if (informationSource.TryGetValue(language.ToString(), out var languageInformation))
         {
             if (!json)
             {
                 DisplayInfo($"The language {language} is currently in {languageInformation.MaturityLevel} maturity level.",
+                            $"The support experience is provided by {languageInformation.SupportExperience}.",
                             "After generating code for this language, you need to install the following packages:");
-                foreach (var dependency in languageInformation.Dependencies)
+                var orderedDependencies = languageInformation.Dependencies.OrderBy(static x => x.Name).Select(static x => x).ToList();
+                var filteredDependencies = (dependencyTypes.ToHashSet(), orderedDependencies.Any(static x => x.DependencyType is DependencyType.Bundle)) switch
                 {
-                    DisplayInfo(string.Format(dependency.Name, dependency.Version));
-                }
+                    //if the user requested a specific type, we filter the dependencies
+                    ({ Count: > 0 }, _) => orderedDependencies.Where(x => x.DependencyType is null || dependencyTypes.Contains(x.DependencyType.Value)).ToList(),
+                    //otherwise we display only the bundle dependencies
+                    (_, true) => orderedDependencies.Where(static x => x.DependencyType is DependencyType.Bundle or DependencyType.Authentication or DependencyType.Additional).ToList(),
+                    //otherwise we display all dependencies
+                    _ => orderedDependencies
+                };
+                var view = new TableView<LanguageDependency>()
+                {
+                    Items = filteredDependencies,
+                };
+                view.AddColumn(static x => x.Name, "Package Name");
+                view.AddColumn(static x => x.Version, "Version");
+                if (orderedDependencies.Any(static x => x.DependencyType is not null))
+                    view.AddColumn(static x => x.DependencyType?.ToString(), "Type");
+                var console = new SystemConsole();
+                using var terminal = new SystemConsoleTerminal(console);
+                var layout = new StackLayoutView { view };
+                console.Append(layout);
+                DisplayDependenciesHint(language);
+                DisplayInstallHint(languageInformation, filteredDependencies);
             }
             else
             {

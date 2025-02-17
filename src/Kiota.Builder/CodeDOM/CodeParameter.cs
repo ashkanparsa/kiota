@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Kiota.Builder.CodeDOM;
 public enum CodeParameterKind
@@ -50,6 +52,10 @@ public enum CodeParameterKind
     /// The content type of the request body when it couldn't be inferred from the description.
     /// </summary>
     RequestBodyContentType,
+    /// <summary>
+    /// When the deserialization method is replaced as a function, this is the parameter representing instance we're deserializing into.
+    /// </summary>
+    DeserializationTarget,
 }
 
 public class CodeParameter : CodeTerminalWithKind<CodeParameterKind>, ICloneable, IDocumentedElement, IDeprecableElement
@@ -73,11 +79,17 @@ public class CodeParameter : CodeTerminalWithKind<CodeParameterKind>, ICloneable
     public CodeDocumentation Documentation { get; set; } = new();
     public string DefaultValue { get; set; } = string.Empty;
     public string SerializationName { get; set; } = string.Empty;
+    public string WireName
+    {
+        get => string.IsNullOrEmpty(SerializationName) ? Name : SerializationName;
+    }
     public DeprecationInformation? Deprecation
     {
         get;
         set;
     }
+
+    public IList<string> PossibleValues { get; init; } = new List<string>();
 
     public object Clone()
     {
@@ -92,6 +104,7 @@ public class CodeParameter : CodeTerminalWithKind<CodeParameterKind>, ICloneable
             Documentation = (CodeDocumentation)Documentation.Clone(),
             Type = (CodeTypeBase)Type.Clone(),
             Deprecation = Deprecation,
+            PossibleValues = PossibleValues.ToList()
         };
     }
 }

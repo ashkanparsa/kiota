@@ -11,7 +11,7 @@ namespace Kiota.Builder.Refiners;
 public class SwiftRefiner : CommonLanguageRefiner
 {
     public SwiftRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
@@ -41,6 +41,7 @@ public class SwiftRefiner : CommonLanguageRefiner
                 true,
                 false,
                 true);
+            RemoveUntypedNodeTypeValues(generatedCode);
             AddDefaultImports(
                 generatedCode,
                 defaultUsingEvaluators);
@@ -101,7 +102,7 @@ public class SwiftRefiner : CommonLanguageRefiner
             if (rawUrlParam != null)
                 rawUrlParam.Type.IsNullable = false;
             currentMethod.Parameters.Where(x => x.IsOfKind(CodeParameterKind.RequestAdapter))
-                .Where(x => x.Type.Name.StartsWith("I", StringComparison.InvariantCultureIgnoreCase))
+                .Where(x => x.Type.Name.StartsWith('I'))
                 .ToList()
                 .ForEach(x => x.Type.Name = x.Type.Name[1..]); // removing the "I"
         }
@@ -204,7 +205,7 @@ public class SwiftRefiner : CommonLanguageRefiner
                 Kind = CodeClassKind.BarrelInitializer,
                 Documentation = new()
                 {
-                    Description = "Root class for extensions",
+                    DescriptionTemplate = "Root class for extensions",
                 },
             });
         }

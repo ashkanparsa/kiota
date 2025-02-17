@@ -12,12 +12,13 @@ namespace Kiota.Builder.Refiners;
 public class GoRefiner : CommonLanguageRefiner
 {
     public GoRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         _configuration.NamespaceNameSeparator = "/";
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
+            DeduplicateErrorMappings(generatedCode);
             MoveRequestBuilderPropertiesToBaseType(generatedCode,
                 new CodeUsing
                 {
@@ -36,14 +37,40 @@ public class GoRefiner : CommonLanguageRefiner
                 static x => x.ToFirstCharacterLowerCase(),
                 GenerationLanguage.Go);
             FlattenNestedHierarchy(generatedCode);
-            FlattenGoParamsFileNames(generatedCode);
-            FlattenGoFileNames(generatedCode);
+            FlattenParamsFileNames(generatedCode);
+            FlattenFileNames(generatedCode);
+            NormalizeNamespaceNames(generatedCode);
             AddInnerClasses(
                 generatedCode,
                 true,
                 string.Empty,
                 false,
                 MergeOverLappedStrings);
+            if (_configuration.ExcludeBackwardCompatible) //TODO remove condition for v2
+                RemoveRequestConfigurationClasses(generatedCode,
+                    new CodeUsing
+                    {
+                        Name = "RequestConfiguration",
+                        Declaration = new CodeType
+                        {
+                            Name = AbstractionsNamespaceName,
+                            IsExternal = true
+                        }
+                    },
+                    new CodeType
+                    {
+                        Name = "DefaultQueryParameters",
+                        IsExternal = true,
+                    },
+                    usingForDefaultGenericParameter: new CodeUsing
+                    {
+                        Name = "DefaultQueryParameters",
+                        Declaration = new CodeType
+                        {
+                            Name = AbstractionsNamespaceName,
+                            IsExternal = true
+                        }
+                    });
             RenameCancellationParameter(generatedCode);
             RemoveDiscriminatorMappingsTargetingSubNamespaces(generatedCode);
             cancellationToken.ThrowIfCancellationRequested();
@@ -63,14 +90,23 @@ public class GoRefiner : CommonLanguageRefiner
             RemoveModelPropertiesThatDependOnSubNamespaces(
                 generatedCode
             );
+            FixConstructorClashes(generatedCode, x => $"{x}Escaped");
+            ReplaceReservedNames(
+                generatedCode,
+                new GoNamespaceReservedNamesProvider(),
+                x => $"{x}Escaped",
+                shouldReplaceCallback: x => x is CodeNamespace
+            );
             ReplaceReservedNames(
                 generatedCode,
                 new GoReservedNamesProvider(),
                 x => $"{x}Escaped",
-                shouldReplaceCallback: x => x is not CodeProperty currentProp ||
+                shouldReplaceCallback: x => (x is not CodeNamespace) &&
+                                            (x is not CodeEnumOption && x is not CodeEnum) && // enums and enum options start with uppercase
+                                            (x is not CodeProperty currentProp ||
                                             !(currentProp.Parent is CodeClass parentClass &&
                                             parentClass.IsOfKind(CodeClassKind.QueryParameters, CodeClassKind.ParameterSet) &&
-                                            currentProp.Access == AccessModifier.Public)); // Go reserved keywords are all lowercase and public properties are uppercased when we don't provide accessors (models)
+                                            currentProp.Access == AccessModifier.Public))); // Go reserved keywords are all lowercase and public properties are uppercased when we don't provide accessors (models)
             ReplaceReservedExceptionPropertyNames(generatedCode, new GoExceptionsReservedNamesProvider(), x => $"{x}Escaped");
             cancellationToken.ThrowIfCancellationRequested();
             AddPropertiesAndMethodTypesImports(
@@ -112,7 +148,7 @@ public class GoRefiner : CommonLanguageRefiner
             AddConstructorsForDefaultValues(
                 generatedCode,
                 true,
-                true,  //forcing add as constructors are required for by factories 
+                true,  //forcing add as constructors are required for by factories
                 new[] { CodeClassKind.RequestConfiguration });
             cancellationToken.ThrowIfCancellationRequested();
             MakeModelPropertiesNullable(
@@ -139,8 +175,8 @@ public class GoRefiner : CommonLanguageRefiner
                 });
             AddSerializationModulesImport(
                 generatedCode,
-                new[] { "github.com/microsoft/kiota-abstractions-go/serialization.SerializationWriterFactory", "github.com/microsoft/kiota-abstractions-go.RegisterDefaultSerializer" },
-                new[] { "github.com/microsoft/kiota-abstractions-go/serialization.ParseNodeFactory", "github.com/microsoft/kiota-abstractions-go.RegisterDefaultDeserializer" });
+                ["github.com/microsoft/kiota-abstractions-go/serialization.SerializationWriterFactory", "github.com/microsoft/kiota-abstractions-go.RegisterDefaultSerializer"],
+                ["github.com/microsoft/kiota-abstractions-go/serialization.ParseNodeFactory", "github.com/microsoft/kiota-abstractions-go.RegisterDefaultDeserializer"]);
             cancellationToken.ThrowIfCancellationRequested();
             AddParentClassToErrorClasses(
                     generatedCode,
@@ -160,6 +196,7 @@ public class GoRefiner : CommonLanguageRefiner
                 generatedCode
             );
             cancellationToken.ThrowIfCancellationRequested();
+            CorrectCyclicReference(generatedCode);
             CopyModelClassesAsInterfaces(
                 generatedCode,
                 x => $"{x.Name}able"
@@ -182,6 +219,203 @@ public class GoRefiner : CommonLanguageRefiner
         }, cancellationToken);
     }
 
+    private void CorrectCyclicReference(CodeElement currentElement)
+    {
+        var currentNameSpace = currentElement.GetImmediateParentOfType<CodeNamespace>();
+        var modelsNameSpace = findClientNameSpace(currentNameSpace)
+            ?.FindNamespaceByName(
+                $"{_configuration.ClientNamespaceName}.{GenerationConfiguration.ModelsNamespaceSegmentName}");
+
+        if (modelsNameSpace == null)
+            return;
+
+        var dependencies = new Dictionary<string, HashSet<string>>();
+        GetUsingsInModelsNameSpace(modelsNameSpace, modelsNameSpace, dependencies);
+
+        var migratedNamespaces = new Dictionary<string, string>();
+        var cycles = FindCycles(dependencies);
+        foreach (var cycle in cycles)
+        {
+            foreach (var cycleReference in cycle.Value)
+            {
+                var dupNs = cycleReference[^2]; // 2nd last element is target base namespace
+                var nameSpace = modelsNameSpace.FindNamespaceByName(dupNs, true);
+
+                migratedNamespaces[dupNs] = modelsNameSpace.Name;
+                MigrateNameSpace(nameSpace!, modelsNameSpace);
+
+                if (!cycle.Key.Equals(modelsNameSpace.Name, StringComparison.OrdinalIgnoreCase)
+                    && !migratedNamespaces.ContainsKey(cycle.Key)
+                    && modelsNameSpace.FindNamespaceByName(cycle.Key, true) is { } currentNs)
+                {
+                    migratedNamespaces[cycle.Key] = modelsNameSpace.Name;
+                    MigrateNameSpace(currentNs, modelsNameSpace);
+                }
+            }
+        }
+
+        CorrectReferencesToMigratedModels(currentElement, migratedNamespaces);
+    }
+
+    private string GetComposedName(CodeElement codeClass)
+    {
+        var classNameList = getPathsName(codeClass, codeClass.Name);
+        return string.Join(string.Empty, classNameList.Count > 1 ? classNameList.Skip(1) : classNameList);
+    }
+
+    private static void GetUsingsInModelsNameSpace(CodeNamespace modelsNameSpace, CodeNamespace currentNameSpace, Dictionary<string, HashSet<string>> dependencies)
+    {
+        if (!modelsNameSpace.Name.Equals(currentNameSpace.Name, StringComparison.OrdinalIgnoreCase) && !currentNameSpace.IsChildOf(modelsNameSpace))
+            return;
+
+        dependencies[currentNameSpace.Name] = currentNameSpace.Classes
+            .SelectMany(static codeClass => codeClass.Usings)
+            .Where(static x => x.Declaration != null && !x.Declaration.IsExternal)
+            .Select(static x => x.Declaration?.TypeDefinition?.GetImmediateParentOfType<CodeNamespace>())
+            .OfType<CodeNamespace>()
+            .Where(ns => !ns.Name.Equals(currentNameSpace.Name, StringComparison.OrdinalIgnoreCase))
+            .Select(static ns => ns.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var codeNameSpace in currentNameSpace.Namespaces.Where(codeNameSpace => !dependencies.ContainsKey(codeNameSpace.Name)))
+        {
+            GetUsingsInModelsNameSpace(modelsNameSpace, codeNameSpace, dependencies);
+        }
+    }
+
+    /// <summary>
+    /// Returns a dictionary of cycles in the graph with the key being the base namespace and the values being the path to the cycle
+    /// In GoLang, any self referencing namespace in a tree is a cycle, therefore the whole namespace is moved to the root
+    /// </summary>
+    /// <param name="dependencies"></param>
+    /// <returns></returns>
+    private static Dictionary<string, List<List<string>>> FindCycles(Dictionary<string, HashSet<string>> dependencies)
+    {
+        var cycles = new Dictionary<string, List<List<string>>>();
+        var visited = new HashSet<string>();
+        var stack = new Stack<string>();
+
+        foreach (var node in dependencies.Keys)
+        {
+            if (!visited.Contains(node))
+            {
+                SearchCycles(node, node, dependencies, visited, stack, cycles);
+            }
+        }
+
+        return cycles;
+    }
+
+
+    /// <summary>
+    /// Performs a DFS search to find cycles in the graph. Method will stop at the first cycle found in each node
+    /// </summary>
+    private static void SearchCycles(string parentNode, string node, Dictionary<string, HashSet<string>> dependencies, HashSet<string> visited, Stack<string> stack, Dictionary<string, List<List<string>>> cycles)
+    {
+        visited.Add(node);
+        stack.Push(node);
+
+        if (dependencies.TryGetValue(node, out var value))
+        {
+            var stackSet = new HashSet<string>(stack);
+            foreach (var neighbor in value)
+            {
+                if (stackSet.Contains(neighbor))
+                {
+                    var cycle = stack.Reverse().Concat([neighbor]).ToList();
+                    if (!cycles.ContainsKey(parentNode))
+                        cycles[parentNode] = new List<List<string>>();
+
+                    cycles[parentNode].Add(cycle);
+                }
+                else if (!visited.Contains(neighbor))
+                {
+                    SearchCycles(parentNode, neighbor, dependencies, visited, stack, cycles);
+                }
+            }
+        }
+
+        stack.Pop();
+    }
+
+    private void MigrateNameSpace(CodeNamespace currentNameSpace, CodeNamespace targetNameSpace)
+    {
+        foreach (var codeClass in currentNameSpace.Classes)
+        {
+            currentNameSpace.RemoveChildElement(codeClass);
+            codeClass.Name = GetComposedName(codeClass);
+            codeClass.Parent = targetNameSpace;
+            targetNameSpace.AddClass(codeClass);
+        }
+
+        foreach (var x in currentNameSpace.Enums)
+        {
+            currentNameSpace.RemoveChildElement(x);
+            x.Name = GetComposedName(x);
+            x.Parent = targetNameSpace;
+            targetNameSpace.AddEnum(x);
+        }
+
+        foreach (var x in currentNameSpace.Interfaces)
+        {
+            currentNameSpace.RemoveChildElement(x);
+            x.Name = GetComposedName(x);
+            x.Parent = targetNameSpace;
+            targetNameSpace.AddInterface(x);
+        }
+
+        foreach (var x in currentNameSpace.Functions)
+        {
+            currentNameSpace.RemoveChildElement(x);
+            x.Name = GetComposedName(x);
+            x.Parent = targetNameSpace;
+            targetNameSpace.AddFunction(x);
+        }
+
+        foreach (var x in currentNameSpace.Constants)
+        {
+            currentNameSpace.RemoveChildElement(x);
+            x.Name = GetComposedName(x);
+            x.Parent = targetNameSpace;
+            targetNameSpace.AddConstant(x);
+        }
+
+        foreach (var ns in currentNameSpace.Namespaces)
+        {
+            MigrateNameSpace(ns, targetNameSpace);
+        }
+    }
+    private static void CorrectReferencesToMigratedModels(CodeElement currentElement, Dictionary<string, string> migratedNamespaces)
+    {
+        if (currentElement is CodeNamespace cn)
+        {
+            var usings = cn.GetChildElements()
+                .SelectMany(static x => x.GetChildElements())
+                .OfType<ProprietableBlockDeclaration>()
+                .SelectMany(static x => x.Usings)
+                .Where(x => migratedNamespaces.ContainsKey(x.Name))
+                .ToArray();
+
+            foreach (var codeUsing in usings)
+            {
+                if (codeUsing.Parent is not ProprietableBlockDeclaration blockDeclaration ||
+                    codeUsing.Declaration?.TypeDefinition?.GetImmediateParentOfType<CodeNamespace>().Name.Equals(migratedNamespaces[codeUsing.Name], StringComparison.OrdinalIgnoreCase) == false
+                    )
+                {
+                    continue;
+                }
+
+                blockDeclaration.RemoveUsings(codeUsing);
+                blockDeclaration.AddUsings(new CodeUsing
+                {
+                    Name = migratedNamespaces[codeUsing.Name],
+                    Declaration = codeUsing.Declaration
+                });
+            }
+        }
+
+        CrawlTree(currentElement, x => CorrectReferencesToMigratedModels(x, migratedNamespaces));
+    }
     private void GenerateCodeFiles(CodeElement currentElement)
     {
         if (currentElement is CodeInterface codeInterface && currentElement.Parent is CodeNamespace codeNamespace)
@@ -240,7 +474,7 @@ public class GoRefiner : CommonLanguageRefiner
 
             var currentNameSpace = codeClass.GetImmediateParentOfType<CodeNamespace>();
             var modelsNameSpace = findClientNameSpace(currentNameSpace)
-                ?.FindNamespaceByName($"{_configuration.ClientNamespaceName}.models");
+                ?.FindNamespaceByName($"{_configuration.ClientNamespaceName}.{GenerationConfiguration.ModelsNamespaceSegmentName}");
 
             foreach (var property in propertiesToCorrect)
             {
@@ -303,15 +537,13 @@ public class GoRefiner : CommonLanguageRefiner
             findClientNameSpace(currentNamespace) is CodeNamespace parentNameSpace)
         {
             // if the parent is not the models namespace rename and move it to package root
-            var modelNameSpace = parentNameSpace.FindNamespaceByName($"{_configuration.ClientNamespaceName}.models");
+            var modelNameSpace = parentNameSpace.FindNamespaceByName($"{_configuration.ClientNamespaceName}.{GenerationConfiguration.ModelsNamespaceSegmentName}");
             var packageRootNameSpace = findNameSpaceAtLevel(parentNameSpace, currentNamespace, 1);
             if (!packageRootNameSpace.Name.Equals(currentNamespace.Name, StringComparison.Ordinal) && modelNameSpace != null && !currentNamespace.IsChildOf(modelNameSpace))
             {
-                var classNameList = getPathsName(codeClass, codeClass.Name);
-                var newClassName = string.Join(string.Empty, classNameList.Count > 1 ? classNameList.Skip(1) : classNameList);
 
                 currentNamespace.RemoveChildElement(codeClass);
-                codeClass.Name = newClassName;
+                codeClass.Name = GetComposedName(codeClass);
                 codeClass.Parent = packageRootNameSpace;
                 packageRootNameSpace.AddClass(codeClass);
             }
@@ -320,7 +552,7 @@ public class GoRefiner : CommonLanguageRefiner
         CrawlTree(currentElement, FlattenNestedHierarchy);
     }
 
-    private void FlattenGoParamsFileNames(CodeElement currentElement)
+    private void FlattenParamsFileNames(CodeElement currentElement)
     {
         if (currentElement is CodeMethod codeMethod
             && codeMethod.IsOfKind(CodeMethodKind.RequestGenerator, CodeMethodKind.RequestExecutor))
@@ -335,7 +567,7 @@ public class GoRefiner : CommonLanguageRefiner
 
         }
 
-        CrawlTree(currentElement, FlattenGoParamsFileNames);
+        CrawlTree(currentElement, FlattenParamsFileNames);
     }
 
     private List<string> getPathsName(CodeElement codeClass, string fileName, bool removeDuplicate = true)
@@ -373,7 +605,7 @@ public class GoRefiner : CommonLanguageRefiner
         return namespaceList[^level];
     }
 
-    private void FlattenGoFileNames(CodeElement currentElement)
+    private void FlattenFileNames(CodeElement currentElement)
     {
         // add the namespace to the name of the code element and the file name
         if (currentElement is CodeClass codeClass
@@ -393,7 +625,23 @@ public class GoRefiner : CommonLanguageRefiner
             nextNameSpace.AddClass(codeClass);
         }
 
-        CrawlTree(currentElement, FlattenGoFileNames);
+        CrawlTree(currentElement, FlattenFileNames);
+    }
+
+    private static void FixConstructorClashes(CodeElement currentElement, Func<string, string> nameCorrection)
+    {
+        if (currentElement is CodeNamespace currentNamespace)
+            foreach (var codeClassName in currentNamespace
+                                        .Classes
+                                        .Where(static x => x.Name.StartsWith("New", StringComparison.OrdinalIgnoreCase))
+                                        .Select(static x => x.Name)
+                                        .ToArray())
+            {
+                var targetName = codeClassName[3..];
+                if (currentNamespace.FindChildByName<CodeClass>(targetName, false) is not null)
+                    currentNamespace.RenameChildElement(codeClassName, nameCorrection(codeClassName));
+            }
+        CrawlTree(currentElement, x => FixConstructorClashes(x, nameCorrection));
     }
 
     protected static void RenameCancellationParameter(CodeElement currentElement)
@@ -401,7 +649,7 @@ public class GoRefiner : CommonLanguageRefiner
         if (currentElement is CodeMethod currentMethod && currentMethod.IsOfKind(CodeMethodKind.RequestExecutor) && currentMethod.Parameters.OfKind(CodeParameterKind.Cancellation) is CodeParameter parameter)
         {
             parameter.Name = ContextParameterName;
-            parameter.Documentation.Description = ContextVarDescription;
+            parameter.Documentation.DescriptionTemplate = ContextVarDescription;
             parameter.Kind = CodeParameterKind.Cancellation;
             parameter.Optional = false;
             parameter.Type.Name = conventions.ContextVarTypeName;
@@ -426,7 +674,7 @@ public class GoRefiner : CommonLanguageRefiner
                 Kind = CodeParameterKind.Cancellation,
                 Optional = false,
                 Documentation = {
-                    Description = ContextVarDescription,
+                    DescriptionTemplate = ContextVarDescription,
                 },
             });
         CrawlTree(currentElement, AddContextParameterToGeneratorMethods);
@@ -445,7 +693,7 @@ public class GoRefiner : CommonLanguageRefiner
                                                                 pType.TypeDefinition != null &&
                                                                 currentNamespace.IsParentOf(pType.TypeDefinition.GetImmediateParentOfType<CodeNamespace>()))
                                                     .ToArray();
-            if (propertiesToRemove.Any())
+            if (propertiesToRemove.Length != 0)
             {
                 currentClass.RemoveChildElement(propertiesToRemove);
                 var propertiesToRemoveHashSet = propertiesToRemove.ToHashSet();
@@ -481,20 +729,12 @@ public class GoRefiner : CommonLanguageRefiner
     }
     private static void AddErrorAndStringsImportForEnums(CodeElement currentElement)
     {
-        if (currentElement is CodeEnum currentEnum)
+        if (currentElement is CodeEnum { Flags: true } currentEnum)
         {
             currentEnum.AddUsing(new CodeUsing
             {
-                Name = "errors",
+                Name = "strings",
             });
-
-            if (currentEnum.Flags)
-            {
-                currentEnum.AddUsing(new CodeUsing
-                {
-                    Name = "strings",
-                });
-            }
         }
         CrawlTree(currentElement, AddErrorAndStringsImportForEnums);
     }
@@ -504,6 +744,9 @@ public class GoRefiner : CommonLanguageRefiner
         "Duration",
         "TimeOnly",
         "DateOnly",
+        "TimeSpan",
+        "Time",
+        "ISODuration",
         "string",
         "UUID",
         "Guid"
@@ -526,7 +769,7 @@ public class GoRefiner : CommonLanguageRefiner
         new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.Deserializer, CodeMethodKind.Factory),
             "github.com/microsoft/kiota-abstractions-go/serialization", "ParseNode", "Parsable"),
         new (static x => x is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.Model),
-            "github.com/microsoft/kiota-abstractions-go/serialization", "Parsable"),
+            SerializationNamespaceName, "Parsable"),
         new (static x => x is CodeMethod method &&
                          method.IsOfKind(CodeMethodKind.RequestGenerator) &&
                          method.Parameters.Any(x => x.IsOfKind(CodeParameterKind.RequestBody) &&
@@ -534,16 +777,16 @@ public class GoRefiner : CommonLanguageRefiner
                                                     x.Type is CodeType pType &&
                                                     (pType.TypeDefinition is CodeClass ||
                                                      pType.TypeDefinition is CodeInterface)),
-            "github.com/microsoft/kiota-abstractions-go/serialization", "Parsable"),
+            SerializationNamespaceName, "Parsable"),
         new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.Model) &&
                                             (@class.Properties.Any(x => x.IsOfKind(CodePropertyKind.AdditionalData)) ||
                                             @class.StartBlock.Implements.Any(x => KiotaBuilder.AdditionalHolderInterface.Equals(x.Name, StringComparison.OrdinalIgnoreCase))),
-            "github.com/microsoft/kiota-abstractions-go/serialization", "AdditionalDataHolder"),
+            SerializationNamespaceName, "AdditionalDataHolder"),
         new (static x => x is CodeClass @class && @class.OriginalComposedType is CodeUnionType unionType && unionType.Types.Any(static y => !y.IsExternal) && unionType.DiscriminatorInformation.HasBasicDiscriminatorInformation,
             "strings", "EqualFold"),
         new (static x => x is CodeMethod method && (method.IsOfKind(CodeMethodKind.RequestExecutor) || method.IsOfKind(CodeMethodKind.RequestGenerator)), "context","*context"),
         new (static x => x is CodeClass @class && @class.OriginalComposedType is CodeIntersectionType intersectionType && intersectionType.Types.Any(static y => !y.IsExternal) && intersectionType.DiscriminatorInformation.HasBasicDiscriminatorInformation,
-            "github.com/microsoft/kiota-abstractions-go/serialization", "MergeDeserializersForIntersectionWrapper"),
+            SerializationNamespaceName, "MergeDeserializersForIntersectionWrapper"),
         new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.Headers),
             AbstractionsNamespaceName, "RequestHeaders"),
         new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.BackingStore), "github.com/microsoft/kiota-abstractions-go/store","BackingStore"),
@@ -552,9 +795,17 @@ public class GoRefiner : CommonLanguageRefiner
             "github.com/microsoft/kiota-abstractions-go/store", "BackingStoreFactory"),
         new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.RequestExecutor, CodeMethodKind.RequestGenerator) && method.Parameters.Any(static y => y.IsOfKind(CodeParameterKind.RequestBody) && y.Type.Name.Equals(MultipartBodyClassName, StringComparison.OrdinalIgnoreCase)),
             AbstractionsNamespaceName, MultipartBodyClassName),
+        new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.Custom) && prop.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase),
+            SerializationNamespaceName, KiotaBuilder.UntypedNodeName),
+        new (static x => x is CodeMethod @method && @method.IsOfKind(CodeMethodKind.RequestExecutor) && (method.ReturnType.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase) ||
+                                                                                                        method.Parameters.Any(x => x.Kind is CodeParameterKind.RequestBody && x.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase))),
+            SerializationNamespaceName, KiotaBuilder.UntypedNodeName),
+        new (static x => x is CodeEnum @enum && @enum.Flags,"", "math"),
     };
     private const string MultipartBodyClassName = "MultipartBody";
     private const string AbstractionsNamespaceName = "github.com/microsoft/kiota-abstractions-go";
+    private const string SerializationNamespaceName = "github.com/microsoft/kiota-abstractions-go/serialization";
+    internal const string UntypedNodeName = "UntypedNodeable";
 
     private void CorrectImplements(ProprietableBlockDeclaration block)
     {
@@ -589,7 +840,7 @@ public class GoRefiner : CommonLanguageRefiner
             }
 
             currentMethod.Parameters.Where(static x => x.IsOfKind(CodeParameterKind.RequestAdapter))
-                .Where(static x => x.Type.Name.StartsWith("I", StringComparison.InvariantCultureIgnoreCase))
+                .Where(static x => x.Type.Name.StartsWith('I'))
                 .ToList()
                 .ForEach(static x => x.Type.Name = x.Type.Name[1..]); // removing the "I"
         }
@@ -627,21 +878,21 @@ public class GoRefiner : CommonLanguageRefiner
         {"TimeSpan", ("ISODuration", new CodeUsing {
                                         Name = "ISODuration",
                                         Declaration = new CodeType {
-                                            Name = "github.com/microsoft/kiota-abstractions-go/serialization",
+                                            Name = SerializationNamespaceName,
                                             IsExternal = true,
                                         },
                                     })},
         {"DateOnly", (string.Empty, new CodeUsing {
                                 Name = "DateOnly",
                                 Declaration = new CodeType {
-                                    Name = "github.com/microsoft/kiota-abstractions-go/serialization",
+                                    Name = SerializationNamespaceName,
                                     IsExternal = true,
                                 },
                             })},
         {"TimeOnly", (string.Empty, new CodeUsing {
                                 Name = "TimeOnly",
                                 Declaration = new CodeType {
-                                    Name = "github.com/microsoft/kiota-abstractions-go/serialization",
+                                    Name = SerializationNamespaceName,
                                     IsExternal = true,
                                 },
                             })},
@@ -652,6 +903,13 @@ public class GoRefiner : CommonLanguageRefiner
                             IsExternal = true,
                         },
                     })},
+        {KiotaBuilder.UntypedNodeName, (GoRefiner.UntypedNodeName, new CodeUsing {
+                                Name = GoRefiner.UntypedNodeName,
+                                Declaration = new CodeType {
+                                    Name = SerializationNamespaceName,
+                                    IsExternal = true,
+                                },
+                            })},
     };
     private static void CorrectPropertyType(CodeProperty currentProperty)
     {
@@ -708,5 +966,26 @@ public class GoRefiner : CommonLanguageRefiner
                 parameter.Type.Name = currentInnerClass.Name;
         }
         CrawlTree(currentElement, RenameInnerModelsToAppended);
+    }
+
+    private void NormalizeNamespaceNames(CodeElement currentElement)
+    {
+        if (currentElement is CodeNamespace codeNamespace)
+        {
+            var clientNamespace = _configuration.ClientNamespaceName;
+            var namespaceName = codeNamespace.Name;
+            if (namespaceName.StartsWith(clientNamespace, StringComparison.OrdinalIgnoreCase) && !namespaceName.Equals(clientNamespace, StringComparison.OrdinalIgnoreCase))
+            {
+                var secondPart = namespaceName[clientNamespace.Length..]; // The rest of the name after the clientNamespace
+                var withEmptyRemoved = string.Join('.', secondPart.Split('.', StringSplitOptions.RemoveEmptyEntries));
+                var normalizedString = string.IsNullOrEmpty(withEmptyRemoved) switch
+                {
+                    true => string.Empty,
+                    false => $".{withEmptyRemoved}"
+                };
+                codeNamespace.Name = $"{clientNamespace}{normalizedString.ToLowerInvariant()}";
+            }
+        }
+        CrawlTree(currentElement, NormalizeNamespaceNames);
     }
 }

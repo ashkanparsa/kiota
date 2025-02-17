@@ -11,7 +11,7 @@ namespace Kiota.Builder.Refiners;
 public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
 {
     public CSharpRefiner(GenerationConfiguration configuration) : base(configuration) { }
-    public override Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken)
+    public override Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
@@ -21,6 +21,7 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
                 () => new CodeType { Name = "string", IsNullable = false, IsExternal = true },
                 true
             );
+            DeduplicateErrorMappings(generatedCode);
             MoveRequestBuilderPropertiesToBaseType(generatedCode,
                 new CodeUsing
                 {
@@ -31,30 +32,31 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
                         IsExternal = true
                     }
                 });
-            //TODO remove the condition for v2
-            if (_configuration.ExcludeBackwardCompatible)
-                RemoveRequestConfigurationClasses(generatedCode,
-                    new CodeUsing
+
+            RemoveRequestConfigurationClasses(generatedCode,
+                new CodeUsing
+                {
+                    Name = "RequestConfiguration",
+                    Declaration = new CodeType
                     {
-                        Name = "RequestConfiguration",
-                        Declaration = new CodeType
-                        {
-                            Name = AbstractionsNamespaceName,
-                            IsExternal = true
-                        }
-                    },
-                    new CodeType
-                    {
-                        Name = "DefaultQueryParameters",
-                        IsExternal = true,
-                    });
+                        Name = AbstractionsNamespaceName,
+                        IsExternal = true
+                    }
+                },
+                new CodeType
+                {
+                    Name = "DefaultQueryParameters",
+                    IsExternal = true,
+                },
+                !_configuration.ExcludeBackwardCompatible,//TODO remove the condition for v2
+                !_configuration.ExcludeBackwardCompatible);
             AddDefaultImports(generatedCode, defaultUsingEvaluators);
             MoveClassesWithNamespaceNamesUnderNamespace(generatedCode);
             ConvertUnionTypesToWrapper(generatedCode,
                 _configuration.UsesBackingStore,
                 static s => s,
                 true,
-                AbstractionsNamespaceName,
+                SerializationNamespaceName,
                 "IComposedTypeWrapper"
             );
             cancellationToken.ThrowIfCancellationRequested();
@@ -95,7 +97,7 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
                 static s => s.ToPascalCase(UnderscoreArray));
             DisambiguatePropertiesWithClassNames(generatedCode);
             // Correct the core types after reserved names for types/properties are done to avoid collision of types e.g. renaming custom model called `DateOnly` to `Date`
-            CorrectCoreType(generatedCode, CorrectMethodType, CorrectPropertyType);
+            CorrectCoreType(generatedCode, CorrectMethodType, CorrectPropertyType, correctIndexer: CorrectIndexerType);
             cancellationToken.ThrowIfCancellationRequested();
             AddSerializationModulesImport(generatedCode);
             AddParentClassToErrorClasses(
@@ -108,6 +110,7 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
                 generatedCode,
                 "IParseNode"
             );
+            SetTypeAccessModifiers(generatedCode);
         }, cancellationToken);
     }
     protected static void DisambiguatePropertiesWithClassNames(CodeElement currentElement)
@@ -169,7 +172,7 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
         new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.RequestBuilder),
             "System.Threading.Tasks", "Task"),
         new (static x => x is CodeClass @class && @class.IsOfKind(CodeClassKind.Model, CodeClassKind.RequestBuilder),
-            "System.Linq", "Enumerable"),
+            ExtensionsNamespaceName, "Enumerable"),
         new (static x => x is CodeMethod method && method.IsOfKind(CodeMethodKind.ClientConstructor) &&
                     method.Parameters.Any(y => y.IsOfKind(CodeParameterKind.BackingStore)),
             StoreNamespaceName,  "IBackingStoreFactory", "IBackingStoreFactorySingleton"),
@@ -181,6 +184,11 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
             SerializationNamespaceName, "ParseNodeHelper"),
         new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.Headers),
             AbstractionsNamespaceName, "RequestHeaders"),
+        new (static x => x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.Custom) && prop.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase),
+            SerializationNamespaceName, KiotaBuilder.UntypedNodeName),
+        new (static x => x is CodeMethod @method && @method.IsOfKind(CodeMethodKind.RequestExecutor) && (method.ReturnType.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase) ||
+                                                                                                        method.Parameters.Any(x => x.Kind is CodeParameterKind.RequestBody && x.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase))),
+            SerializationNamespaceName, KiotaBuilder.UntypedNodeName),
         new (static x => x is CodeEnum prop && prop.Options.Any(x => x.IsNameEscaped),
             "System.Runtime.Serialization", "EnumMemberAttribute"),
         new (static x => x is IDeprecableElement element && element.Deprecation is not null && element.Deprecation.IsDeprecated,
@@ -217,6 +225,15 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
                                                 .Select(x => x.Type)
                                                 .Union(new[] { currentMethod.ReturnType })
                                                 .ToArray());
+        CorrectCoreTypes(currentMethod.Parent as CodeClass, DateTypesReplacements, currentMethod.PathQueryAndHeaderParameters
+                                                .Select(x => x.Type)
+                                                .Union(new[] { currentMethod.ReturnType })
+                                                .ToArray());
+    }
+    protected static void CorrectIndexerType(CodeIndexer currentIndexer)
+    {
+        ArgumentNullException.ThrowIfNull(currentIndexer);
+        CorrectCoreTypes(currentIndexer.Parent as CodeClass, DateTypesReplacements, currentIndexer.IndexParameter.Type);
     }
 
     private static readonly Dictionary<string, (string, CodeUsing?)> DateTypesReplacements = new(StringComparer.OrdinalIgnoreCase)
@@ -244,4 +261,14 @@ public class CSharpRefiner : CommonLanguageRefiner, ILanguageRefiner
                 })
         },
     };
+
+    private void SetTypeAccessModifiers(CodeElement currentElement)
+    {
+        if (currentElement is IAccessibleElement accessibleElement and (CodeEnum or CodeClass))
+        {
+            accessibleElement.Access = _configuration.TypeAccessModifier;
+        }
+
+        CrawlTree(currentElement, SetTypeAccessModifiers);
+    }
 }

@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
-
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.PathSegmenters;
 using Kiota.Builder.Writers.Cli;
 using Kiota.Builder.Writers.CSharp;
+using Kiota.Builder.Writers.Dart;
 using Kiota.Builder.Writers.Go;
+using Kiota.Builder.Writers.Http;
 using Kiota.Builder.Writers.Java;
 using Kiota.Builder.Writers.Php;
 using Kiota.Builder.Writers.Python;
@@ -155,6 +156,15 @@ public abstract class LanguageWriter
                 case CodeFileDeclaration cfd:
                     ((ICodeElementWriter<CodeFileDeclaration>)elementWriter).WriteCodeElement(cfd, this);
                     break;
+                case CodeConstant codeConstant:
+                    ((ICodeElementWriter<CodeConstant>)elementWriter).WriteCodeElement(codeConstant, this);
+                    break;
+                case CodeUnionType codeUnionType:
+                    ((ICodeElementWriter<CodeUnionType>)elementWriter).WriteCodeElement(codeUnionType, this);
+                    break;
+                case CodeIntersectionType codeIntersectionType:
+                    ((ICodeElementWriter<CodeIntersectionType>)elementWriter).WriteCodeElement(codeIntersectionType, this);
+                    break;
             }
         else if (code is not CodeClass &&
                 code is not BlockDeclaration &&
@@ -169,20 +179,22 @@ public abstract class LanguageWriter
         if (!Writers.TryAdd(typeof(T), writer))
             Writers[typeof(T)] = writer;
     }
-    private readonly Dictionary<Type, object> Writers = new(); // we have to type as object because dotnet doesn't have type capture i.e eq for `? extends CodeElement`
+    private readonly Dictionary<Type, object> Writers = []; // we have to type as object because dotnet doesn't have type capture i.e eq for `? extends CodeElement`
     public static LanguageWriter GetLanguageWriter(GenerationLanguage language, string outputPath, string clientNamespaceName, bool usesBackingStore = false, bool excludeBackwardCompatible = false)
     {
         return language switch
         {
-            GenerationLanguage.CSharp => new CSharpWriter(outputPath, clientNamespaceName, excludeBackwardCompatible),
+            GenerationLanguage.CSharp => new CSharpWriter(outputPath, clientNamespaceName),
             GenerationLanguage.Java => new JavaWriter(outputPath, clientNamespaceName),
-            GenerationLanguage.TypeScript => new TypeScriptWriter(outputPath, clientNamespaceName, usesBackingStore),
+            GenerationLanguage.TypeScript => new TypeScriptWriter(outputPath, clientNamespaceName),
             GenerationLanguage.Ruby => new RubyWriter(outputPath, clientNamespaceName),
             GenerationLanguage.PHP => new PhpWriter(outputPath, clientNamespaceName, usesBackingStore),
             GenerationLanguage.Python => new PythonWriter(outputPath, clientNamespaceName, usesBackingStore),
-            GenerationLanguage.Go => new GoWriter(outputPath, clientNamespaceName),
+            GenerationLanguage.Go => new GoWriter(outputPath, clientNamespaceName, excludeBackwardCompatible),
             GenerationLanguage.CLI => new CliWriter(outputPath, clientNamespaceName),
             GenerationLanguage.Swift => new SwiftWriter(outputPath, clientNamespaceName),
+            GenerationLanguage.Dart => new DartWriter(outputPath, clientNamespaceName),
+            GenerationLanguage.HTTP => new HttpWriter(outputPath, clientNamespaceName),
             _ => throw new InvalidEnumArgumentException($"{language} language currently not supported."),
         };
     }

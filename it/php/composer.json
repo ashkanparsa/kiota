@@ -6,10 +6,12 @@
     "microsoft/kiota-serialization-text": "*",
     "microsoft/kiota-http-guzzle": "*",
     "microsoft/kiota-serialization-json": "*",
+    "microsoft/kiota-serialization-form": "*",
+    "microsoft/kiota-serialization-multipart": "*",
     "microsoft/kiota-authentication-phpleague": "*"
   },
   "require-dev": {
-    "phpstan/phpstan": "^1.2.0"
+    "phpstan/phpstan": "^1.2.0 || ^2.0.0"
   },
   "minimum-stability": "stable",
   "license": "MIT",

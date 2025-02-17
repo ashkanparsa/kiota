@@ -1,20 +1,20 @@
 ﻿using System;
 using System.IO;
-
+using System.Linq;
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Writers;
 
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.TypeScript;
-public class CodePropertyWriterTests : IDisposable
+public sealed class CodePropertyWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
     private readonly StringWriter tw;
     private readonly LanguageWriter writer;
     private readonly CodeProperty property;
-    private readonly CodeClass parentClass;
+    private readonly CodeInterface parentInterface;
     private const string PropertyName = "propertyName";
     private const string TypeName = "Somecustomtype";
     public CodePropertyWriterTests()
@@ -23,11 +23,11 @@ public class CodePropertyWriterTests : IDisposable
         tw = new StringWriter();
         writer.SetTextWriter(tw);
         var root = CodeNamespace.InitRootNamespace();
-        parentClass = new CodeClass
+        parentInterface = root.AddInterface(new CodeInterface
         {
-            Name = "parentClass"
-        };
-        root.AddClass(parentClass);
+            Name = "parentClass",
+            OriginalClass = new CodeClass() { Name = "parentClass" }
+        }).First();
         property = new CodeProperty
         {
             Name = PropertyName,
@@ -36,7 +36,7 @@ public class CodePropertyWriterTests : IDisposable
                 Name = TypeName
             }
         };
-        parentClass.AddProperty(property, new()
+        parentInterface.AddProperty(property, new()
         {
             Name = "pathParameters",
             Kind = CodePropertyKind.PathParameters,
@@ -65,17 +65,16 @@ public class CodePropertyWriterTests : IDisposable
         property.Kind = CodePropertyKind.RequestBuilder;
         writer.Write(property);
         var result = tw.ToString();
-        Assert.Contains($"return new {TypeName}", result);
-        Assert.Contains("this.requestAdapter", result);
-        Assert.Contains("this.pathParameters", result);
+        Assert.Contains("get", result, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("?", result, StringComparison.OrdinalIgnoreCase);
     }
     [Fact]
-    public void WritesCustomProperty()
+    public void WritesCustomPropertyWithDefaultedNullType()
     {
         property.Kind = CodePropertyKind.Custom;
         writer.Write(property);
         var result = tw.ToString();
-        Assert.Contains($"{PropertyName}?: {TypeName}", result);
+        Assert.Contains($"{PropertyName}?: {TypeName} | null", result);
         Assert.DoesNotContain("| undefined", result); // redundant with ?
     }
     [Fact]
@@ -113,5 +112,15 @@ public class CodePropertyWriterTests : IDisposable
         var result = tw.ToString();
         Assert.Contains("[]", result);
         Assert.DoesNotContain("[] []", result);
+    }
+    [Fact]
+    public void FailsOnPropertiesForClasses()
+    {
+        property.Kind = CodePropertyKind.Custom;
+        property.Parent = new CodeClass
+        {
+            Name = "parentClass"
+        };
+        Assert.Throws<InvalidOperationException>(() => writer.Write(property));
     }
 }

@@ -27,15 +27,15 @@ on:
       ]
 
 jobs:
-  build:
+  dotnet-build:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 7.0.x
+          dotnet-version: 9.x
       - name: Restore dependencies
         run: dotnet restore kiota.sln
       - name: Check formatting
@@ -48,7 +48,7 @@ jobs:
         run: dotnet tool install --global dotnet-reportgenerator-globaltool
       - name: Generate coverage report
         run: reportgenerator -reports:**/coverage.cobertura.xml -targetdir:./reports/coverage
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: reports/coverage
@@ -62,13 +62,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 7.0.x
+          dotnet-version: 9.x
       - name: Restore dependencies
         run: dotnet restore kiota.sln
       - name: Publish ${{ matrix.os }}
-        run: dotnet publish ./src/kiota/kiota.csproj -c Release -p:PublishSingleFile=true -o ./${{ matrix.os }}
+        run: dotnet publish ./src/kiota/kiota.csproj -c Release -p:PublishSingleFile=true -o ./${{ matrix.os }} -f net9.0
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: ./${{ matrix.os }}
 
       # Mac and Linux
       - name: Isolate the binary

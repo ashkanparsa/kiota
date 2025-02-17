@@ -16,7 +16,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         ArgumentNullException.ThrowIfNull(configuration);
         _configuration = configuration;
     }
-    public abstract Task Refine(CodeNamespace generatedCode, CancellationToken cancellationToken);
+    public abstract Task RefineAsync(CodeNamespace generatedCode, CancellationToken cancellationToken);
     /// <summary>
     ///     This method adds the imports for the default serializers and deserializers to the api client class.
     ///     It also updates the module names to replace the fully qualified class name by the class name without the namespace.
@@ -81,7 +81,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
 
         return false;
     }
-    protected static void CorrectCoreTypesForBackingStore(CodeElement currentElement, string defaultPropertyValue, Boolean hasPrefix = true)
+    protected static void CorrectCoreTypesForBackingStore(CodeElement currentElement, string defaultPropertyValue, bool hasPrefix = true)
     {
         if (currentElement is CodeClass currentClass && currentClass.IsOfKind(CodeClassKind.Model, CodeClassKind.RequestBuilder)
             && currentClass.StartBlock is ClassDeclaration currentDeclaration)
@@ -93,7 +93,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             if (backingStoreProperty != null)
             {
                 backingStoreProperty.DefaultValue = defaultPropertyValue;
-                backingStoreProperty.NamePrefix = hasPrefix ? backingStoreProperty.NamePrefix : String.Empty;
+                backingStoreProperty.NamePrefix = hasPrefix ? backingStoreProperty.NamePrefix : string.Empty;
             }
 
         }
@@ -119,7 +119,8 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         if (current is CodeClass currentClass && classNames &&
             refineName(currentClass.Name) is string refinedClassName &&
             !currentClass.Name.Equals(refinedClassName, StringComparison.Ordinal) &&
-            currentClass.Parent is IBlock parentBlock)
+            currentClass.Parent is IBlock parentBlock &&
+            parentBlock.FindChildByName<CodeElement>(refinedClassName) is null) // ensure the refinement won't generate a duplicate
         {
             parentBlock.RenameChildElement(currentClass.Name, refinedClassName);
         }
@@ -127,7 +128,8 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             enumNames &&
             refineName(currentEnum.Name) is string refinedEnumName &&
             !currentEnum.Name.Equals(refinedEnumName, StringComparison.Ordinal) &&
-            currentEnum.Parent is IBlock parentBlock2)
+            currentEnum.Parent is IBlock parentBlock2 &&
+            parentBlock2.FindChildByName<CodeElement>(refinedEnumName) is null) // ensure the refinement won't generate a duplicate
         {
             parentBlock2.RenameChildElement(currentEnum.Name, refinedEnumName);
         }
@@ -136,7 +138,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
     protected static void ReplacePropertyNames(CodeElement current, HashSet<CodePropertyKind> propertyKindsToReplace, Func<string, string> refineAccessorName)
     {
         ArgumentNullException.ThrowIfNull(refineAccessorName);
-        if (!(propertyKindsToReplace?.Any() ?? true)) return;
+        if (propertyKindsToReplace is null || propertyKindsToReplace.Count == 0) return;
         if (current is CodeProperty currentProperty &&
             !currentProperty.ExistsInBaseType &&
             propertyKindsToReplace!.Contains(currentProperty.Kind) &&
@@ -157,10 +159,12 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         }
         CrawlTree(current, x => ReplacePropertyNames(x, propertyKindsToReplace!, refineAccessorName));
     }
-    protected static void AddGetterAndSetterMethods(CodeElement current, HashSet<CodePropertyKind> propertyKindsToAddAccessors, Func<CodeElement, string, string> refineAccessorName, bool removeProperty, bool parameterAsOptional, string getterPrefix, string setterPrefix, string fieldPrefix = "_")
+    protected static void AddGetterAndSetterMethods(CodeElement current, HashSet<CodePropertyKind> propertyKindsToAddAccessors, Func<CodeElement, string, string> refineAccessorName, bool removeProperty, bool parameterAsOptional, string getterPrefix, string setterPrefix, string fieldPrefix = "_", AccessModifier propertyAccessModifier = AccessModifier.Private)
     {
         ArgumentNullException.ThrowIfNull(refineAccessorName);
-        if (!(propertyKindsToAddAccessors?.Any() ?? true)) return;
+        var isSetterPrefixEmpty = string.IsNullOrEmpty(setterPrefix);
+        var isGetterPrefixEmpty = string.IsNullOrEmpty(getterPrefix);
+        if (propertyKindsToAddAccessors is null || propertyKindsToAddAccessors.Count == 0) return;
         if (current is CodeProperty currentProperty &&
             !currentProperty.ExistsInBaseType &&
             propertyKindsToAddAccessors!.Contains(currentProperty.Kind) &&
@@ -171,7 +175,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 parentClass.RemoveChildElement(currentProperty);
             else
             {
-                currentProperty.Access = AccessModifier.Private;
+                currentProperty.Access = propertyAccessModifier;
                 if (!string.IsNullOrEmpty(fieldPrefix))
                     currentProperty.NamePrefix = fieldPrefix;
             }
@@ -179,28 +183,29 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
 
             currentProperty.Getter = parentClass.AddMethod(new CodeMethod
             {
-                Name = $"get-{accessorName}",
+                Name = $"{(isGetterPrefixEmpty ? "get-" : getterPrefix)}{accessorName}",
                 Access = AccessModifier.Public,
                 IsAsync = false,
                 Kind = CodeMethodKind.Getter,
                 ReturnType = (CodeTypeBase)currentProperty.Type.Clone(),
-                Documentation = new()
+                Documentation = new(currentProperty.Documentation.TypeReferences.ToDictionary(static x => x.Key, static x => x.Value))
                 {
-                    Description = $"Gets the {currentProperty.WireName} property value. {currentProperty.Documentation.Description}",
+                    DescriptionTemplate = $"Gets the {currentProperty.WireName} property value. {currentProperty.Documentation.DescriptionTemplate}",
                 },
                 AccessedProperty = currentProperty,
                 Deprecation = currentProperty.Deprecation,
             }).First();
-            currentProperty.Getter.Name = $"{getterPrefix}{accessorName}"; // so we don't get an exception for duplicate names when no prefix
+            if (isGetterPrefixEmpty)
+                currentProperty.Getter.Name = $"{getterPrefix}{accessorName}"; // so we don't get an exception for duplicate names when no prefix
             currentProperty.Setter = parentClass.AddMethod(new CodeMethod
             {
-                Name = $"set-{accessorName}",
+                Name = $"{(isSetterPrefixEmpty ? "set-" : setterPrefix)}{accessorName}",
                 Access = AccessModifier.Public,
                 IsAsync = false,
                 Kind = CodeMethodKind.Setter,
-                Documentation = new()
+                Documentation = new(currentProperty.Documentation.TypeReferences.ToDictionary(static x => x.Key, static x => x.Value))
                 {
-                    Description = $"Sets the {currentProperty.WireName} property value. {currentProperty.Documentation.Description}",
+                    DescriptionTemplate = $"Sets the {currentProperty.WireName} property value. {currentProperty.Documentation.DescriptionTemplate}",
                 },
                 AccessedProperty = currentProperty,
                 ReturnType = new CodeType
@@ -211,7 +216,8 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 },
                 Deprecation = currentProperty.Deprecation,
             }).First();
-            currentProperty.Setter.Name = $"{setterPrefix}{accessorName}"; // so we don't get an exception for duplicate names when no prefix
+            if (isSetterPrefixEmpty)
+                currentProperty.Setter.Name = $"{setterPrefix}{accessorName}"; // so we don't get an exception for duplicate names when no prefix
 
             currentProperty.Setter.AddParameter(new CodeParameter
             {
@@ -219,13 +225,13 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 Kind = CodeParameterKind.SetterValue,
                 Documentation = new()
                 {
-                    Description = $"Value to set for the {currentProperty.WireName} property.",
+                    DescriptionTemplate = $"Value to set for the {currentProperty.WireName} property.",
                 },
                 Optional = parameterAsOptional,
                 Type = (CodeTypeBase)currentProperty.Type.Clone(),
             });
         }
-        CrawlTree(current, x => AddGetterAndSetterMethods(x, propertyKindsToAddAccessors!, refineAccessorName, removeProperty, parameterAsOptional, getterPrefix, setterPrefix, fieldPrefix));
+        CrawlTree(current, x => AddGetterAndSetterMethods(x, propertyKindsToAddAccessors!, refineAccessorName, removeProperty, parameterAsOptional, getterPrefix, setterPrefix, fieldPrefix, propertyAccessModifier));
     }
     protected static void AddConstructorsForDefaultValues(CodeElement current, bool addIfInherited, bool forceAdd = false, CodeClassKind[]? classKindsToExclude = null)
     {
@@ -245,9 +251,14 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                     Name = "void"
                 },
                 IsAsync = false,
-                Documentation = new()
+                Documentation = new(new() {
+                    { "TypeName", new CodeType() {
+                        IsExternal = false,
+                        TypeDefinition = current,
+                    }}
+                })
                 {
-                    Description = $"Instantiates a new {current.Name} and sets the default values.",
+                    DescriptionTemplate = "Instantiates a new {TypeName} and sets the default values.",
                 },
             });
         CrawlTree(current, x => AddConstructorsForDefaultValues(x, addIfInherited, forceAdd, classKindsToExclude));
@@ -260,8 +271,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             codeElementExceptions: new HashSet<Type> { typeof(CodeNamespace) },
             shouldReplaceCallback: codeElement => codeElement is CodeClass
                                                 || codeElement is CodeMethod
-                                                || codeElement is CodeEnum codeEnum && provider.ReservedNames.Contains(codeEnum.Name) // only replace enum type names not enum member names
-                                                || (codeElement is CodeProperty currentProperty && currentProperty.Type is CodeType propertyType && !propertyType.IsExternal && provider.ReservedNames.Contains(propertyType.Name)));// only replace property type names not property names
+                                                || codeElement is CodeEnum codeEnum && provider.ReservedNames.Contains(codeEnum.Name)); // only replace enum type names not enum member names
 
     protected static void ReplaceReservedNamespaceTypeNames(CodeElement current, IReservedNamesProvider provider, Func<string, string> replacement) =>
         ReplaceReservedNames(current, provider, replacement, shouldReplaceCallback: codeElement => codeElement is CodeNamespace || codeElement is CodeClass);
@@ -286,7 +296,9 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             provider,
             replacement,
             null,
-            static x => ((x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.Custom)) || x is CodeMethod) && x.Parent is CodeClass parent && parent.IsOfKind(CodeClassKind.Model) && parent.IsErrorDefinition
+            x => (((x is CodeProperty prop && prop.IsOfKind(CodePropertyKind.Custom)) || x is CodeMethod) && x.Parent is CodeClass parent && parent.IsOfKind(CodeClassKind.Model) && parent.IsErrorDefinition) // rename properties or method of error classes matching the reserved names.
+                                                || (x is CodeClass codeClass && codeClass.IsOfKind(CodeClassKind.Model) && codeClass.IsErrorDefinition
+                                                    && codeClass.Properties.FirstOrDefault(classProp => provider.ReservedNames.Contains(classProp.Name)) is { } matchingProperty && matchingProperty.Name.Equals(codeClass.Name, StringComparison.OrdinalIgnoreCase)) // rename the class if it has a matching property and the class has the same name as the property.
         );
     }
     protected static void ReplaceReservedNames(CodeElement current, IReservedNamesProvider provider, Func<string, string> replacement, HashSet<Type>? codeElementExceptions = null, Func<CodeElement, bool>? shouldReplaceCallback = null)
@@ -306,8 +318,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             // in the CodeNamespace if-block so we also need to update the using references
             if (!codeElementExceptions?.Contains(typeof(CodeNamespace)) ?? true)
                 ReplaceReservedCodeUsingNamespaceSegmentNames(currentDeclaration, provider, replacement);
-            if (currentDeclaration.Inherits?.Name is string inheritName && provider.ReservedNames.Contains(inheritName) && (currentDeclaration.Inherits is not CodeType))
-                currentDeclaration.Inherits.Name = replacement(currentDeclaration.Inherits.Name);
+            // we don't need to rename the inheritance name as it's either external and shouldn't change or it's generated and the code type maps directly to the source
         }
         else if (current is CodeNamespace currentNamespace &&
             isNotInExceptions &&
@@ -316,18 +327,13 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             ReplaceReservedNamespaceSegments(currentNamespace, provider, replacement);
         else if (current is CodeMethod currentMethod &&
             isNotInExceptions &&
-            shouldReplace)
+            shouldReplace &&
+            provider.ReservedNames.Contains(currentMethod.Name) &&
+            current.Parent is IBlock parentBlock)
         {
-            if (provider.ReservedNames.Contains(currentMethod.Name))
-                currentMethod.Name = replacement.Invoke(currentMethod.Name);
+            parentBlock.RenameChildElement(current.Name, replacement.Invoke(currentMethod.Name));
         }
-        else if (current is CodeProperty currentProperty &&
-                isNotInExceptions &&
-                shouldReplace &&
-                currentProperty.Type is CodeType propertyType &&
-                !propertyType.IsExternal &&
-                provider.ReservedNames.Contains(currentProperty.Type.Name))
-            propertyType.Name = replacement.Invoke(propertyType.Name);
+        // we don't need to property type name as it's either external and shouldn't change or it's generated and the code type maps directly to the source
 
         // Check if the current name meets the following conditions to be replaced
         // 1. In the list of reserved names
@@ -356,7 +362,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 current.Name = replacementName;
         }
 
-        CrawlTree(current, x => ReplaceReservedNames(x, provider, replacement, codeElementExceptions, shouldReplaceCallback), true);
+        CrawlTree(current, x => ReplaceReservedNames(x, provider, replacement, codeElementExceptions, shouldReplaceCallback));
     }
     private static void ReplaceReservedCodeUsingNamespaceSegmentNames(ClassDeclaration currentDeclaration, IReservedNamesProvider provider, Func<string, string> replacement)
     {
@@ -399,7 +405,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         var usingsToAdd = evaluators.Where(x => x.CodeElementEvaluator.Invoke(current))
                         .SelectMany(usingSelector)
                         .ToArray();
-        if (usingsToAdd.Any())
+        if (usingsToAdd.Length != 0)
         {
             var parentBlock = current.GetImmediateParentOfType<IBlock>();
             var targetBlock = parentBlock.Parent is CodeClass parentClassParent ? parentClassParent : parentBlock;
@@ -469,36 +475,44 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         }
         CrawlTree(currentElement, x => ConvertUnionTypesToWrapper(x, usesBackingStore, refineMethodName, supportInnerClasses, markerInterfaceNamespace, markerInterfaceName, markerMethodName));
     }
-    private static CodeTypeBase ConvertComposedTypeToWrapper(CodeClass codeClass, CodeComposedTypeBase codeComposedType, bool usesBackingStore, Func<string, string> refineMethodName, bool supportsInnerClasses, string markerInterfaceNamespace, string markerInterfaceName, string markerMethodName)
+    private static CodeType ConvertComposedTypeToWrapper(CodeClass codeClass, CodeComposedTypeBase codeComposedType, bool usesBackingStore, Func<string, string> refineMethodName, bool supportsInnerClasses, string markerInterfaceNamespace, string markerInterfaceName, string markerMethodName)
     {
         ArgumentNullException.ThrowIfNull(codeClass);
         ArgumentNullException.ThrowIfNull(codeComposedType);
         CodeClass newClass;
         var description =
-            $"Composed type wrapper for classes {codeComposedType.Types.Select(static x => x.Name).Order(StringComparer.OrdinalIgnoreCase).Aggregate(static (x, y) => x + ", " + y)}";
+            "Composed type wrapper for classes {TypesList}";
         if (!supportsInnerClasses)
         {
             var @namespace = codeClass.GetImmediateParentOfType<CodeNamespace>();
-            if (@namespace.FindChildByName<CodeClass>(codeComposedType.Name, false) is CodeClass { OriginalComposedType: null })
+            if (@namespace.FindChildByName<CodeClass>(codeComposedType.Name, false) is { OriginalComposedType: null })
                 codeComposedType.Name = $"{codeComposedType.Name}Wrapper";
+            if (GetAlreadyExistingComposedCodeType(@namespace, codeComposedType) is { } existingCodeType)
+                return existingCodeType;
             newClass = @namespace.AddClass(new CodeClass
             {
                 Name = codeComposedType.Name,
-                Documentation = new()
+                Documentation = new(new() {
+                    { "TypesList", codeComposedType }
+                })
                 {
-                    Description = description,
+                    DescriptionTemplate = description,
                 },
                 Deprecation = codeComposedType.Deprecation,
             }).Last();
         }
-        else if (codeComposedType.TargetNamespace is CodeNamespace targetNamespace)
+        else if (codeComposedType.TargetNamespace is { } targetNamespace)
         {
+            if (GetAlreadyExistingComposedCodeType(targetNamespace, codeComposedType) is { } existingCodeType)
+                return existingCodeType;
             newClass = targetNamespace.AddClass(new CodeClass
             {
                 Name = codeComposedType.Name,
-                Documentation = new()
+                Documentation = new(new() {
+                    { "TypesList", codeComposedType }
+                })
                 {
-                    Description = description
+                    DescriptionTemplate = description
                 },
             })
             .First();
@@ -513,12 +527,16 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
         {
             if (codeComposedType.Name.Equals(codeClass.Name, StringComparison.OrdinalIgnoreCase) || codeClass.FindChildByName<CodeProperty>(codeComposedType.Name, false) is not null)
                 codeComposedType.Name = $"{codeComposedType.Name}Wrapper";
+            if (GetAlreadyExistingComposedCodeType(codeClass, codeComposedType) is { } existingCodeType)
+                return existingCodeType;
             newClass = codeClass.AddInnerClass(new CodeClass
             {
                 Name = codeComposedType.Name,
-                Documentation = new()
+                Documentation = new(new() {
+                    { "TypesList", codeComposedType }
+                })
                 {
-                    Description = description
+                    DescriptionTemplate = description
                 },
             })
                                 .First();
@@ -529,9 +547,11 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                                 {
                                     Name = x.Name,
                                     Type = x,
-                                    Documentation = new()
+                                    Documentation = new(new() {
+                                        { "TypeName", x }
+                                    })
                                     {
-                                        Description = $"Composed type representation for type {x.Name}"
+                                        DescriptionTemplate = "Composed type representation for type {TypeName}"
                                     },
                                 }).ToArray());
         if (codeComposedType.Types.All(static x => x.TypeDefinition is CodeClass targetClass && targetClass.IsOfKind(CodeClassKind.Model) ||
@@ -573,7 +593,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 IsStatic = false,
                 Documentation = new()
                 {
-                    Description = "Determines if the current object is a wrapper around a composed type",
+                    DescriptionTemplate = "Determines if the current object is a wrapper around a composed type",
                 },
             });
         }
@@ -588,6 +608,24 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             ActionOf = codeComposedType.ActionOf,
         };
     }
+
+    private static CodeType? GetAlreadyExistingComposedCodeType(IBlock targetNamespace, CodeComposedTypeBase codeComposedType)
+    {
+        if (targetNamespace.FindChildByName<CodeClass>(codeComposedType.Name, false) is { OriginalComposedType: not null } existingClass && existingClass.OriginalComposedType.Name.Equals(codeComposedType.Name, StringComparison.OrdinalIgnoreCase))
+        { // the composed type was already added/created and the typeDefinition(codeclass) is already present in the namespace/class.
+            return new CodeType
+            {
+                Name = codeComposedType.Name,
+                TypeDefinition = existingClass,
+                CollectionKind = codeComposedType.CollectionKind,
+                IsNullable = codeComposedType.IsNullable,
+                ActionOf = codeComposedType.ActionOf,
+            };
+        }
+
+        return null;
+    }
+
     protected static void MoveClassesWithNamespaceNamesUnderNamespace(CodeElement currentElement)
     {
         if (currentElement is CodeClass currentClass &&
@@ -662,7 +700,8 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                                     .Where(static x => x.Type.ActionOf && x.IsOfKind(CodeParameterKind.RequestConfiguration))
                                     .SelectMany(static x => x.Type.AllTypes)
                                     .Select(static x => x.TypeDefinition)
-                                    .OfType<CodeClass>();
+                                    .OfType<CodeClass>()
+                                    .Distinct();
 
             // ensure we do not miss out the types present in request configuration objects i.e. the query parameters
             var nestedQueryParameters = innerClasses
@@ -670,31 +709,32 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                                     .Where(static x => x.IsOfKind(CodePropertyKind.QueryParameters))
                                     .SelectMany(static x => x.Type.AllTypes)
                                     .Select(static x => x.TypeDefinition)
-                                    .OfType<CodeClass>();
+                                    .OfType<CodeClass>()
+                                    .Distinct();
 
             var nestedClasses = new List<CodeClass>();
             nestedClasses.AddRange(innerClasses);
             nestedClasses.AddRange(nestedQueryParameters);
 
-            foreach (var innerClass in nestedClasses)
+            foreach (var nestedClass in nestedClasses)
             {
-                var originalClassName = innerClass.Name;
+                if (nestedClass.Parent is not CodeClass parentClass) continue;
 
                 if (nameFactory != default)
-                    innerClass.Name = nameFactory(currentClass.Name, innerClass.Name);
-                else if (prefixClassNameWithParentName && !innerClass.Name.StartsWith(currentClass.Name, StringComparison.OrdinalIgnoreCase))
-                    innerClass.Name = $"{currentClass.Name}{innerClass.Name}";
+                    parentClass.RenameChildElement(nestedClass.Name, nameFactory(currentClass.Name, nestedClass.Name));
+                else if (prefixClassNameWithParentName && !nestedClass.Name.StartsWith(currentClass.Name, StringComparison.OrdinalIgnoreCase))
+                    parentClass.RenameChildElement(nestedClass.Name, $"{currentClass.Name}{nestedClass.Name}");
 
-                if (addToParentNamespace && parentNamespace.FindChildByName<CodeClass>(innerClass.Name, false) == null)
+                if (addToParentNamespace && parentNamespace.FindChildByName<CodeClass>(nestedClass.Name, false) == null)
                 { // the query parameters class is already a child of the request executor method parent class
-                    parentNamespace.AddClass(innerClass);
-                    currentClass.RemoveChildElementByName(originalClassName);
+                    parentNamespace.AddClass(nestedClass);
+                    currentClass.RemoveChildElementByName(nestedClass.Name);
                 }
-                else if (!addToParentNamespace && innerClass.Parent == null && currentClass.FindChildByName<CodeClass>(innerClass.Name, false) == null) //failsafe
-                    currentClass.AddInnerClass(innerClass);
+                else if (!addToParentNamespace && currentClass.FindChildByName<CodeClass>(nestedClass.Name, false) == null) //failsafe
+                    currentClass.AddInnerClass(nestedClass);
 
                 if (!string.IsNullOrEmpty(queryParametersBaseClassName))
-                    innerClass.StartBlock.Inherits = new CodeType { Name = queryParametersBaseClassName, IsExternal = true };
+                    nestedClass.StartBlock.Inherits = new CodeType { Name = queryParametersBaseClassName, IsExternal = true };
             }
         }
         CrawlTree(current, x => AddInnerClasses(x, prefixClassNameWithParentName, queryParametersBaseClassName, addToParentNamespace, nameFactory));
@@ -761,19 +801,19 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                             .ToArray();
 
 
-            if (usingsToAdd.Any())
+            if (usingsToAdd.Length != 0)
                 (currentClass.Parent is CodeClass parentClass ? parentClass : currentClass).AddUsing(usingsToAdd); //lots of languages do not support imports on nested classes
         }
         CrawlTree(current, x => AddPropertiesAndMethodTypesImports(x, includeParentNamespaces, includeCurrentNamespace, compareOnDeclaration, codeTypeFilter));
     }
-    protected static void CrawlTree(CodeElement currentElement, Action<CodeElement> function, bool innerOnly = false)
+    protected static void CrawlTree(CodeElement currentElement, Action<CodeElement> function, bool innerOnly = true)
     {
         ArgumentNullException.ThrowIfNull(currentElement);
         ArgumentNullException.ThrowIfNull(function);
         foreach (var childElement in currentElement.GetChildElements(innerOnly))
             function.Invoke(childElement);
     }
-    protected static void CorrectCoreType(CodeElement currentElement, Action<CodeMethod>? correctMethodType, Action<CodeProperty>? correctPropertyType, Action<ProprietableBlockDeclaration>? correctImplements = default)
+    protected static void CorrectCoreType(CodeElement currentElement, Action<CodeMethod>? correctMethodType, Action<CodeProperty>? correctPropertyType, Action<ProprietableBlockDeclaration>? correctImplements = default, Action<CodeIndexer>? correctIndexer = default)
     {
         switch (currentElement)
         {
@@ -786,8 +826,11 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             case ProprietableBlockDeclaration block:
                 correctImplements?.Invoke(block);
                 break;
+            case CodeIndexer indexer:
+                correctIndexer?.Invoke(indexer);
+                break;
         }
-        CrawlTree(currentElement, x => CorrectCoreType(x, correctMethodType, correctPropertyType, correctImplements));
+        CrawlTree(currentElement, x => CorrectCoreType(x, correctMethodType, correctPropertyType, correctImplements, correctIndexer), false);
     }
     protected static void MakeModelPropertiesNullable(CodeElement currentElement)
     {
@@ -903,7 +946,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 foreach (var implement in currentParent
                              .StartBlock
                              .Implements
-                             .Where(pi => !currentClass.Usings.Any(ci => ci.Name.Equals(pi.Name, StringComparison.OrdinalIgnoreCase))))
+                             .Where(pi => !currentClass.Usings.Any(ci => !ci.IsExternal && ci.Name.Equals(pi.Name, StringComparison.OrdinalIgnoreCase))))
                 {
                     currentClass.StartBlock.AddImplements((CodeType)implement.Clone());
                 }
@@ -1050,7 +1093,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             currentMethod.IsOfKind(CodeMethodKind.Deserializer) &&
             currentMethod.Parent is CodeClass parentClass)
         {
-            foreach (var property in parentClass.GetChildElements(true).OfType<CodeProperty>())
+            foreach (var property in parentClass.UnorderedProperties)
             {
                 if (property.Type is not CodeType propertyType || propertyType.TypeDefinition == null)
                     continue;
@@ -1325,7 +1368,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 Kind = CodeMethodKind.QueryParametersMapper,
                 Documentation = new()
                 {
-                    Description = "Maps the query parameters names to their encoded names for the URI template parsing.",
+                    DescriptionTemplate = "Maps the query parameters names to their encoded names for the URI template parsing.",
                 },
             }).First();
             method.AddParameter(new CodeParameter
@@ -1340,7 +1383,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                 Optional = false,
                 Documentation = new()
                 {
-                    Description = "The original query parameter name in the class.",
+                    DescriptionTemplate = "The original query parameter name in the class.",
                 },
             });
         }
@@ -1375,12 +1418,12 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                                                         mappingClass.StartBlock.InheritsFrom(currentClass))
                                             .Select(x => x.Key)
                                             .ToArray();
-            if (keysToRemove.Any())
+            if (keysToRemove.Length != 0)
                 currentClass.DiscriminatorInformation.RemoveDiscriminatorMapping(keysToRemove);
         }
         CrawlTree(currentElement, RemoveDiscriminatorMappingsTargetingSubNamespaces);
     }
-    protected static void MoveRequestBuilderPropertiesToBaseType(CodeElement currentElement, CodeUsing baseTypeUsing, AccessModifier? accessModifier = null)
+    protected static void MoveRequestBuilderPropertiesToBaseType(CodeElement currentElement, CodeUsing baseTypeUsing, AccessModifier? accessModifier = null, bool addCurrentTypeAsGenericTypeParameter = false)
     {
         ArgumentNullException.ThrowIfNull(baseTypeUsing);
         if (currentElement is CodeClass currentClass && currentClass.IsOfKind(CodeClassKind.RequestBuilder))
@@ -1392,6 +1435,13 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                     Name = baseTypeUsing.Name,
                     IsExternal = true,
                 };
+                if (addCurrentTypeAsGenericTypeParameter)
+                {
+                    currentClass.StartBlock.Inherits.AddGenericTypeParameterValue(new CodeType
+                    {
+                        TypeDefinition = currentClass,
+                    });
+                }
                 currentClass.AddUsing(baseTypeUsing);
             }
 
@@ -1404,7 +1454,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
             }
         }
 
-        CrawlTree(currentElement, x => MoveRequestBuilderPropertiesToBaseType(x, baseTypeUsing, accessModifier));
+        CrawlTree(currentElement, x => MoveRequestBuilderPropertiesToBaseType(x, baseTypeUsing, accessModifier, addCurrentTypeAsGenericTypeParameter));
     }
     protected static void RemoveRequestConfigurationClassesCommonProperties(CodeElement currentElement, CodeUsing baseTypeUsing)
     {
@@ -1425,43 +1475,95 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
 
         CrawlTree(currentElement, x => RemoveRequestConfigurationClassesCommonProperties(x, baseTypeUsing));
     }
-    protected static void RemoveRequestConfigurationClasses(CodeElement currentElement, CodeUsing? configurationParameterTypeUsing = null, CodeType? defaultValueForGenericTypeParam = null)
+    protected static void RemoveUntypedNodeTypeValues(CodeElement currentElement)
+    {
+        switch (currentElement)
+        {
+            case CodeProperty currentProperty when currentElement.Parent is CodeClass parentClass && currentProperty.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase):
+                parentClass.RemoveChildElement(currentProperty);
+                break;
+            case CodeMethod currentMethod when currentMethod.IsOfKind(CodeMethodKind.RequestExecutor):
+                if (currentMethod.ReturnType.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase))
+                {
+                    currentMethod.ReturnType = new CodeType { Name = "binary", IsExternal = true };
+                }
+                if (currentMethod.Parameters.Where(x => x.Kind is CodeParameterKind.RequestBody && x.Type.Name.Equals(KiotaBuilder.UntypedNodeName, StringComparison.OrdinalIgnoreCase)).ToList() is { Count: > 0 } parameters)
+                {
+                    foreach (var parameter in parameters)
+                    {
+                        parameter.Type = new CodeType { Name = "binary", IsExternal = true };
+                    }
+                }
+                break;
+        }
+        CrawlTree(currentElement, RemoveUntypedNodeTypeValues);
+    }
+    protected static void RemoveRequestConfigurationClasses(CodeElement currentElement, CodeUsing? configurationParameterTypeUsing = null, CodeType? defaultValueForGenericTypeParam = null, bool keepRequestConfigurationClass = false, bool addDeprecation = false, CodeUsing? usingForDefaultGenericParameter = null)
     {
         if (currentElement is CodeClass currentClass && currentClass.IsOfKind(CodeClassKind.RequestConfiguration) &&
             currentClass.Parent is CodeClass parentClass)
         {
-            parentClass.RemoveChildElement(currentClass);
+            if (addDeprecation && keepRequestConfigurationClass)
+                currentClass.Deprecation = new DeprecationInformation("This class is deprecated. Please use the generic RequestConfiguration class generated by the generator.");
+            else if (!keepRequestConfigurationClass)
+                parentClass.RemoveChildElement(currentClass);
             var configurationParameters = parentClass.Methods
                                                     .SelectMany(static x => x.Parameters)
                                                     .Where(x => x.IsOfKind(CodeParameterKind.RequestConfiguration) && x.Type is CodeType type && type.TypeDefinition == currentClass)
                                                     .ToArray();
             var genericTypeParamValue = currentClass.Properties.FirstOrDefaultOfKind(CodePropertyKind.QueryParameters)?.Type as CodeType ?? defaultValueForGenericTypeParam;
-            if (configurationParameterTypeUsing != null && genericTypeParamValue != null && configurationParameters.Any())
+            if (configurationParameterTypeUsing != null && genericTypeParamValue != null && configurationParameters.Length != 0)
             {
                 parentClass.AddUsing(configurationParameterTypeUsing);
+                if (usingForDefaultGenericParameter != null)
+                    parentClass.AddUsing(usingForDefaultGenericParameter);
                 var configurationParameterType = new CodeType
                 {
                     Name = configurationParameterTypeUsing.Name,
                     IsExternal = true,
                 };
+                if (addDeprecation && keepRequestConfigurationClass)
+                {
+                    currentClass.RemovePropertiesOfKind(CodePropertyKind.Headers, CodePropertyKind.Options, CodePropertyKind.QueryParameters);
+                    currentClass.StartBlock.Inherits = GetGenericTypeForRequestConfiguration(configurationParameterType, genericTypeParamValue);
+                }
                 foreach (var configurationParameter in configurationParameters)
                 {
-                    var newType = (CodeType)configurationParameterType.Clone();
+                    var newType = GetGenericTypeForRequestConfiguration(configurationParameterType, genericTypeParamValue);
                     newType.ActionOf = configurationParameter.Type.ActionOf;
-                    newType.GenericTypeParameterValues.Add(genericTypeParamValue);
                     configurationParameter.Type = newType;
                 }
             }
         }
 
-        CrawlTree(currentElement, x => RemoveRequestConfigurationClasses(x, configurationParameterTypeUsing, defaultValueForGenericTypeParam));
+        CrawlTree(currentElement, x => RemoveRequestConfigurationClasses(x, configurationParameterTypeUsing, defaultValueForGenericTypeParam, keepRequestConfigurationClass, addDeprecation, usingForDefaultGenericParameter));
     }
+    private static CodeType GetGenericTypeForRequestConfiguration(CodeType configurationParameterType, CodeType genericTypeParamValue)
+    {
+        var newType = (CodeType)configurationParameterType.Clone();
+        newType.AddGenericTypeParameterValue(genericTypeParamValue);
+        return newType;
+    }
+
     internal static void AddPrimaryErrorMessage(CodeElement currentElement, string name, Func<CodeType> type, bool asProperty = false)
     {
         if (currentElement is CodeClass { IsErrorDefinition: true } currentClass)
         {
             if (asProperty)
             {
+                if (currentClass.FindChildByName<CodeProperty>(name, false) is { } sameNameProperty)
+                {
+                    if (sameNameProperty.Type.Name.Equals(type().Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // As the type may not be settable by the serialization logic
+                        // set this as the primary error message as it matches the type so that the deserialization logic can map this correctly. 
+                        sameNameProperty.IsPrimaryErrorMessage = true;
+                    }
+                    if (string.IsNullOrEmpty(sameNameProperty.SerializationName))
+                        sameNameProperty.SerializationName = sameNameProperty.Name;
+                    currentClass.RenameChildElement(name, $"{name}Escaped"); // rename to prevent collisions and keep the original
+                }
+
                 currentClass.AddProperty(new CodeProperty
                 {
                     Name = name,
@@ -1470,7 +1572,7 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                     Type = type(),
                     Documentation = new()
                     {
-                        Description = "The primary error message.",
+                        DescriptionTemplate = "The primary error message.",
                     },
                 });
             }
@@ -1486,11 +1588,19 @@ public abstract class CommonLanguageRefiner : ILanguageRefiner
                     IsStatic = false,
                     Documentation = new()
                     {
-                        Description = "The primary error message.",
+                        DescriptionTemplate = "The primary error message.",
                     },
                 });
             }
         }
         CrawlTree(currentElement, x => AddPrimaryErrorMessage(x, name, type, asProperty));
+    }
+    protected static void DeduplicateErrorMappings(CodeElement codeElement)
+    {
+        if (codeElement is CodeMethod { Kind: CodeMethodKind.RequestExecutor } requestExecutorMethod)
+        {
+            requestExecutorMethod.DeduplicateErrorMappings();
+        }
+        CrawlTree(codeElement, DeduplicateErrorMappings);
     }
 }

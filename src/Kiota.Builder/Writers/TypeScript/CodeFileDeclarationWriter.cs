@@ -26,6 +26,7 @@ public class CodeFileDeclarationWriter : BaseElementWriter<CodeFileDeclaration, 
                         CodeFunction f => f.StartBlock.Usings,
                         CodeInterface ci => ci.Usings,
                         CodeClass cc => cc.Usings,
+                        CodeConstant c => c.StartBlock.Usings,
                         _ => Enumerable.Empty<CodeUsing>()
                     };
                 }
@@ -39,7 +40,7 @@ public class CodeFileDeclarationWriter : BaseElementWriter<CodeFileDeclaration, 
                     .Where(static x => x is { IsExternal: false, Declaration.TypeDefinition: not null })
                     .GroupBy(static x =>
                         $"{x.Declaration!.TypeDefinition!.GetImmediateParentOfType<CodeNamespace>().Name}.{x.Declaration?.Name.ToLowerInvariant()}")
-                    .Select(static x => x.OrderBy(static x => x.Parent?.Name).First()));
+                .Select(static x => x.OrderByDescending(static x => x.Alias, StringComparer.OrdinalIgnoreCase).ThenBy(static x => x.Parent?.Name, StringComparer.OrdinalIgnoreCase).First()));
 
             _codeUsingWriter.WriteCodeElement(filteredUsing, ns, writer);
         }

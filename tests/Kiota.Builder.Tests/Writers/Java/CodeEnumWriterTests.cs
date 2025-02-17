@@ -9,7 +9,7 @@ using Kiota.Builder.Writers.Java;
 using Xunit;
 
 namespace Kiota.Builder.Tests.Writers.Java;
-public class CodeEnumWriterTests : IDisposable
+public sealed class CodeEnumWriterTests : IDisposable
 {
     private const string DefaultPath = "./";
     private const string DefaultName = "name";
@@ -68,14 +68,14 @@ public class CodeEnumWriterTests : IDisposable
         {
             Documentation = new()
             {
-                Description = "Some option description",
+                DescriptionTemplate = "Some option description",
             },
             Name = "option1",
         };
         currentEnum.AddOption(option);
         writer.Write(currentEnum);
         var result = tw.ToString();
-        Assert.Contains($"/** {option.Documentation.Description} */", result);
+        Assert.Contains($"/** {option.Documentation.DescriptionTemplate} */", result);
         AssertExtensions.CurlyBracesAreClosed(result);
     }
     [Fact]

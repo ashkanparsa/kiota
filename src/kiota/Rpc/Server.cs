@@ -1,15 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using System.Text.RegularExpressions;
 using Kiota.Builder;
 using Kiota.Builder.Configuration;
+using Kiota.Builder.Extensions;
 using Kiota.Builder.Lock;
 using Kiota.Builder.Logging;
+using Kiota.Builder.WorkspaceManagement;
 using Kiota.Generated;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -17,7 +12,7 @@ using Microsoft.OpenApi.Models;
 using Microsoft.OpenApi.Services;
 
 namespace kiota.Rpc;
-internal class Server : IServer
+internal partial class Server : IServer
 {
     protected KiotaConfiguration Configuration
     {
@@ -36,6 +31,7 @@ internal class Server : IServer
         return configObject;
     });
     private static readonly HttpClient httpClient = new();
+    private static readonly Lazy<bool> IsConfigPreviewEnabled = new(() => bool.TryParse(Environment.GetEnvironmentVariable(KiotaHost.KiotaPreviewEnvironmentVariable), out var isPreviewEnabled) && isPreviewEnabled);
     public string GetVersion()
     {
         return KiotaVersion.Current();
@@ -86,7 +82,7 @@ internal class Server : IServer
     {
         using var fileLogger = new FileLogLogger<KiotaBuilder>(config.OutputPath, LogLevel.Warning);
         var logger = new AggregateLogger<KiotaBuilder>(globalLogger, fileLogger);
-        return await new KiotaBuilder(logger, config, httpClient).GenerateClientAsync(cancellationToken);
+        return await new KiotaBuilder(logger, config, httpClient, IsConfigPreviewEnabled.Value).GenerateClientAsync(cancellationToken);
     }
     public async Task<SearchOperationResult> SearchAsync(string searchTerm, bool clearCache, CancellationToken cancellationToken)
     {
@@ -103,7 +99,7 @@ internal class Server : IServer
         var configuration = Configuration.Generation;
         configuration.ClearCache = clearCache;
         configuration.ApiManifestPath = $"{manifestPath}#{apiIdentifier}";
-        var builder = new KiotaBuilder(logger, configuration, httpClient);
+        var builder = new KiotaBuilder(logger, configuration, httpClient, IsConfigPreviewEnabled.Value);
         var manifestResult = await builder.GetApiManifestDetailsAsync(cancellationToken: cancellationToken);
         return new ManifestResult(logger.LogEntries,
                             manifestResult?.Item1,
@@ -115,12 +111,12 @@ internal class Server : IServer
         var configuration = Configuration.Generation;
         configuration.ClearCache = clearCache;
         configuration.OpenAPIFilePath = GetAbsolutePath(descriptionPath);
-        var builder = new KiotaBuilder(logger, configuration, httpClient);
+        var builder = new KiotaBuilder(logger, configuration, httpClient, IsConfigPreviewEnabled.Value);
         var fullUrlTreeNode = await builder.GetUrlTreeNodeAsync(cancellationToken);
         configuration.IncludePatterns = includeFilters.ToHashSet(StringComparer.Ordinal);
         configuration.ExcludePatterns = excludeFilters.ToHashSet(StringComparer.Ordinal);
-        var filteredTreeNode = configuration.IncludePatterns.Any() || configuration.ExcludePatterns.Any() ?
-                            await new KiotaBuilder(new NoopLogger<KiotaBuilder>(), configuration, httpClient).GetUrlTreeNodeAsync(cancellationToken) : // openapi.net seems to have side effects between tree node and the document, we need to drop all references
+        var filteredTreeNode = configuration.IncludePatterns.Count != 0 || configuration.ExcludePatterns.Count != 0 ?
+                            await new KiotaBuilder(new NoopLogger<KiotaBuilder>(), configuration, httpClient, IsConfigPreviewEnabled.Value).GetUrlTreeNodeAsync(cancellationToken) : // openapi.net seems to have side effects between tree node and the document, we need to drop all references
                             default;
         var filteredPaths = filteredTreeNode is null ? new HashSet<string>() : GetOperationsFromTreeNode(filteredTreeNode).ToHashSet(StringComparer.Ordinal);
         var rootNode = fullUrlTreeNode != null ? ConvertOpenApiUrlTreeNodeToPathItem(fullUrlTreeNode, filteredPaths) : null;
@@ -133,15 +129,16 @@ internal class Server : IServer
                                     Enumerable.Empty<string>())
                                     .Union(node.Children.SelectMany(static x => GetOperationsFromTreeNode(x.Value)));
     }
-    private static readonly Regex indexingNormalizationRegex = new(@"{\w+}", RegexOptions.Compiled, TimeSpan.FromMilliseconds(100));
+    [GeneratedRegex(@"{\w+}", RegexOptions.Singleline, 500)]
+    private static partial Regex indexingNormalizationRegex();
     private static string NormalizeOperationNodePath(OpenApiUrlTreeNode node, OperationType operationType, bool forIndexing = false)
     {
         var name = $"{node.Path}#{operationType.ToString().ToUpperInvariant()}";
         if (forIndexing)
-            return indexingNormalizationRegex.Replace(name, "{}");
+            return indexingNormalizationRegex().Replace(name, "{}");
         return name;
     }
-    public async Task<List<LogEntry>> GenerateAsync(string openAPIFilePath, string outputPath, GenerationLanguage language, string[] includePatterns, string[] excludePatterns, string clientClassName, string clientNamespaceName, bool usesBackingStore, bool cleanOutput, bool clearCache, bool excludeBackwardCompatible, string[] disabledValidationRules, string[] serializers, string[] deserializers, string[] structuredMimeTypes, bool includeAdditionalData, CancellationToken cancellationToken)
+    public async Task<List<LogEntry>> GenerateAsync(string openAPIFilePath, string outputPath, GenerationLanguage language, string[] includePatterns, string[] excludePatterns, string clientClassName, string clientNamespaceName, bool usesBackingStore, bool cleanOutput, bool clearCache, bool excludeBackwardCompatible, string[] disabledValidationRules, string[] serializers, string[] deserializers, string[] structuredMimeTypes, bool includeAdditionalData, ConsumerOperation operation, CancellationToken cancellationToken)
     {
         var logger = new ForwardedLogger<KiotaBuilder>();
         var configuration = Configuration.Generation;
@@ -155,14 +152,20 @@ internal class Server : IServer
         configuration.ClearCache = clearCache;
         configuration.ExcludeBackwardCompatible = excludeBackwardCompatible;
         configuration.IncludeAdditionalData = includeAdditionalData;
-        if (disabledValidationRules is not null && disabledValidationRules.Any())
+        configuration.Operation = operation;
+        if (disabledValidationRules is { Length: > 0 })
             configuration.DisabledValidationRules = disabledValidationRules.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (serializers is not null && serializers.Any())
+        if (serializers is { Length: > 0 })
             configuration.Serializers = serializers.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (deserializers is not null && deserializers.Any())
+        if (deserializers is { Length: > 0 })
             configuration.Deserializers = deserializers.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (structuredMimeTypes is not null && structuredMimeTypes.Any())
+        if (structuredMimeTypes is { Length: > 0 })
             configuration.StructuredMimeTypes = new(structuredMimeTypes);
+        if (IsConfigPreviewEnabled.Value)
+        {
+            configuration.Serializers.Clear();
+            configuration.Deserializers.Clear();
+        }
         if (!string.IsNullOrEmpty(clientClassName))
             configuration.ClientClassName = clientClassName;
         if (!string.IsNullOrEmpty(clientNamespaceName))
@@ -181,6 +184,53 @@ internal class Server : IServer
         }
         return logger.LogEntries;
     }
+    public async Task<List<LogEntry>> GeneratePluginAsync(string openAPIFilePath, string outputPath, PluginType[] pluginTypes, string[] includePatterns,
+        string[] excludePatterns, string clientClassName, bool cleanOutput, bool clearCache, string[] disabledValidationRules,
+        PluginAuthType? pluginAuthType, string? pluginAuthRefid, ConsumerOperation operation, CancellationToken cancellationToken)
+    {
+        var globalLogger = new ForwardedLogger<KiotaBuilder>();
+        var configuration = Configuration.Generation;
+        configuration.PluginTypes = pluginTypes.ToHashSet();
+        configuration.OpenAPIFilePath = GetAbsolutePath(openAPIFilePath);
+        configuration.OutputPath = GetAbsolutePath(outputPath);
+        if (!string.IsNullOrEmpty(clientClassName))
+            configuration.ClientClassName = clientClassName;
+        configuration.CleanOutput = cleanOutput;
+        configuration.ClearCache = clearCache;
+        configuration.Operation = operation;
+        if (disabledValidationRules is { Length: > 0 })
+            configuration.DisabledValidationRules = disabledValidationRules.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (pluginTypes is { Length: > 0 })
+            configuration.PluginTypes = pluginTypes.ToHashSet();
+        if (includePatterns is { Length: > 0 })
+            configuration.IncludePatterns = includePatterns.Select(static x => x.TrimQuotes()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (excludePatterns is { Length: > 0 })
+            configuration.ExcludePatterns = excludePatterns.Select(static x => x.TrimQuotes()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        configuration.OpenAPIFilePath = GetAbsolutePath(configuration.OpenAPIFilePath);
+        configuration.OutputPath = NormalizeSlashesInPath(GetAbsolutePath(configuration.OutputPath));
+        if (!string.IsNullOrEmpty(pluginAuthRefid) && pluginAuthType != null)
+        {
+            var pluginAuthConfig = new PluginAuthConfiguration(pluginAuthRefid);
+            pluginAuthConfig.AuthType = pluginAuthType.Value;
+            configuration.PluginAuthInformation = pluginAuthConfig;
+        }
+
+        try
+        {
+            using var fileLogger = new FileLogLogger<KiotaBuilder>(configuration.OutputPath, LogLevel.Warning);
+            var logger = new AggregateLogger<KiotaBuilder>(globalLogger, fileLogger);
+            var result = await new KiotaBuilder(logger, configuration, httpClient, IsConfigPreviewEnabled.Value).GeneratePluginAsync(cancellationToken);
+            if (result)
+                logger.LogInformation("Generation completed successfully");
+            else
+                logger.LogInformation("Generation skipped as --skip-generation was passed");
+        }
+        catch (Exception ex)
+        {
+            globalLogger.LogCritical(ex, "error generating the plugin: {exceptionMessage}", ex.Message);
+        }
+        return globalLogger.LogEntries;
+    }
     public LanguagesInformation Info()
     {
         return Configuration.Languages;
@@ -190,13 +240,35 @@ internal class Server : IServer
         ArgumentException.ThrowIfNullOrEmpty(descriptionPath);
         return InfoInternalAsync(descriptionPath, clearCache, cancellationToken);
     }
+
+    public async Task<List<LogEntry>> MigrateFromLockFileAsync(string lockDirectoryPath, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(lockDirectoryPath);
+        var logger = new ForwardedLogger<KiotaBuilder>();
+        try
+        {
+            var workspaceManagementService = new WorkspaceManagementService(logger, httpClient, IsConfigPreviewEnabled.Value);
+            var clientNames = await workspaceManagementService.MigrateFromLockFileAsync(string.Empty, lockDirectoryPath, cancellationToken).ConfigureAwait(false);
+            if (!clientNames.Any())
+            {
+                logger.LogWarning("no client configuration was migrated");
+            }
+            logger.LogInformation("Client configurations migrated successfully: {Clients}", string.Join(", ", clientNames));
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "error migrating the lock file: {ExceptionMessage}", ex.Message);
+        }
+        return logger.LogEntries;
+    }
+
     private async Task<LanguagesInformation> InfoInternalAsync(string descriptionPath, bool clearCache, CancellationToken cancellationToken)
     {
         var logger = new ForwardedLogger<KiotaBuilder>();
         var configuration = Configuration.Generation;
         configuration.ClearCache = clearCache;
         configuration.OpenAPIFilePath = GetAbsolutePath(descriptionPath);
-        var builder = new KiotaBuilder(logger, configuration, httpClient);
+        var builder = new KiotaBuilder(logger, configuration, httpClient, IsConfigPreviewEnabled.Value);
         var result = await builder.GetLanguagesInformationAsync(cancellationToken);
         if (result is not null) return result;
         return Configuration.Languages;
@@ -210,22 +282,25 @@ internal class Server : IServer
                                             NormalizeOperationNodePath(node, x.Key),
                                             x.Key.ToString().ToUpperInvariant(),
                                             Array.Empty<PathItem>(),
-                                            !filteredPaths.Any() || filteredPaths.Contains(NormalizeOperationNodePath(node, x.Key, true)),
+                                            filteredPaths.Count == 0 || filteredPaths.Contains(NormalizeOperationNodePath(node, x.Key, true)),
                                             true,
                                             x.Value.ExternalDocs?.Url)) :
                                         Enumerable.Empty<PathItem>())
                             .OrderByDescending(static x => x.isOperation)
                             .ThenBy(static x => x.segment, StringComparer.OrdinalIgnoreCase)
                             .ToArray();
-        return new PathItem(node.Path, node.Segment, children, !filteredPaths.Any() || Array.Exists(children, static x => x.isOperation) && children.Where(static x => x.isOperation).All(static x => x.selected));
+        bool isSelected = filteredPaths.Count == 0 || // There are no filtered paths
+                          Array.Exists(children, static x => x.isOperation) && children.Where(static x => x.isOperation).All(static x => x.selected) || // All operations have been selected
+                          !Array.Exists(children, static x => x.isOperation) && Array.TrueForAll(children, static x => x.selected); // All paths selected but no operations present
+        return new PathItem(node.Path, node.DeduplicatedSegment(), children, isSelected);
     }
-    protected static string GetAbsolutePath(string source)
+    private static string GetAbsolutePath(string source)
     {
         if (string.IsNullOrEmpty(source))
             return string.Empty;
         return Path.IsPathRooted(source) || source.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? source : NormalizeSlashesInPath(Path.Combine(Directory.GetCurrentDirectory(), source));
     }
-    protected static string NormalizeSlashesInPath(string path)
+    private static string NormalizeSlashesInPath(string path)
     {
         if (string.IsNullOrEmpty(path))
             return path;
@@ -233,4 +308,29 @@ internal class Server : IServer
             return path.Replace('/', '\\');
         return path.Replace('\\', '/');
     }
+
+    public Task<List<LogEntry>> RemoveClientAsync(string clientName, bool cleanOutput, CancellationToken cancellationToken)
+    => RemoveClientOrPluginAsync(clientName, cleanOutput, "Client", (workspaceManagementService, clientName, cleanOutput, cancellationToken) => workspaceManagementService.RemoveClientAsync(clientName, cleanOutput, cancellationToken), cancellationToken);
+
+    private static async Task<List<LogEntry>> RemoveClientOrPluginAsync(string clientName, bool cleanOutput, string typeName, Func<WorkspaceManagementService, string, bool, CancellationToken, Task> removal, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(clientName);
+        ArgumentException.ThrowIfNullOrEmpty(typeName);
+        ArgumentNullException.ThrowIfNull(removal);
+        var logger = new ForwardedLogger<KiotaBuilder>();
+        try
+        {
+            var workspaceManagementService = new WorkspaceManagementService(logger, httpClient, IsConfigPreviewEnabled.Value);
+            await removal(workspaceManagementService, clientName, cleanOutput, cancellationToken).ConfigureAwait(false);
+            logger.LogInformation("{TypeName} {ClientName} removed successfully!", typeName, clientName);
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "error removing the {TypeName}: {ExceptionMessage}", typeName.ToLowerInvariant(), ex.Message);
+        }
+        return logger.LogEntries;
+    }
+
+    public async Task<List<LogEntry>> RemovePluginAsync(string pluginName, bool cleanOutput, CancellationToken cancellationToken)
+    => await RemoveClientOrPluginAsync(pluginName, cleanOutput, "Plugin", (workspaceManagementService, pluginName, cleanOutput, cancellationToken) => workspaceManagementService.RemovePluginAsync(pluginName, cleanOutput, cancellationToken), cancellationToken);
 }

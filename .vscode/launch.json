@@ -6,7 +6,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -27,7 +27,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -48,7 +48,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -69,7 +69,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -90,7 +90,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -111,7 +111,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -132,7 +132,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -154,7 +154,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -171,11 +171,32 @@
       "stopAtEntry": false
     },
     {
+      "name": "Launch Dart",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "generate",
+        "--openapi",
+        "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/dev/openApiDocs/v1.0/Mail.yml",
+        "--language",
+        "dart",
+        "-o",
+        "${workspaceFolder}/samples/msgraph-mail/java/utilities/src/main/java/graphjavav4/utilities",
+        "-n",
+        "graphdart4.utilities"
+      ],
+      "cwd": "${workspaceFolder}/src/kiota",
+      "console": "internalConsole",
+      "stopAtEntry": false
+    },
+    {
       "name": "Launch CLI (CSharp)",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "generate",
         "--openapi",
@@ -195,8 +216,11 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
-      "args": ["search", "microsoft"],
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "search",
+        "microsoft"
+      ],
       "cwd": "${workspaceFolder}/src/kiota",
       "console": "internalConsole",
       "stopAtEntry": false
@@ -206,8 +230,11 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
-      "args": ["search", "test"],
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "search",
+        "test"
+      ],
       "cwd": "${workspaceFolder}/src/kiota",
       "console": "internalConsole",
       "stopAtEntry": false
@@ -217,7 +244,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "show",
         "-d",
@@ -232,12 +259,12 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
       "args": [
         "download",
         "msgraph::microsoft-graph",
         "-o",
-        "${workspaceFolder}/src/kiota/bin/Debug/net7.0/graphv1.yml"
+        "${workspaceFolder}/src/kiota/bin/Debug/net9.0/graphv1.yml"
       ],
       "cwd": "${workspaceFolder}/src/kiota",
       "console": "internalConsole",
@@ -248,8 +275,12 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
-      "args": ["info", "-l", "CSharp"],
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "info",
+        "-l",
+        "CSharp"
+      ],
       "cwd": "${workspaceFolder}/src/kiota",
       "console": "internalConsole",
       "stopAtEntry": false
@@ -259,19 +290,111 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
-      "args": ["update", "-o", "${workspaceFolder}/samples"],
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "update",
+        "-o",
+        "${workspaceFolder}/samples"
+      ],
       "cwd": "${workspaceFolder}/src/kiota",
       "console": "internalConsole",
       "stopAtEntry": false
+    },
+    {
+      "name": "Launch Client Migrate",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "workspace",
+        "migrate"
+      ],
+      "cwd": "${workspaceFolder}/samples/msgraph-mail/dotnet",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "env": {
+        "KIOTA_CONFIG_PREVIEW": "true"
+      }
+    },
+    {
+      "name": "Launch Client Generate",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "client",
+        "generate"
+      ],
+      "cwd": "${workspaceFolder}/samples/msgraph-mail/dotnet",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "env": {
+        "KIOTA_CONFIG_PREVIEW": "true"
+      }
+    },
+    {
+      "name": "Launch Client Edit",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "client",
+        "edit",
+        "--client-name",
+        "GraphClient",
+        "--additional-data",
+        "true"
+      ],
+      "cwd": "${workspaceFolder}/samples/msgraph-mail/dotnet",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "env": {
+        "KIOTA_CONFIG_PREVIEW": "true"
+      }
+    },
+    {
+      "name": "Launch Plugin Add",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "plugin",
+        "add",
+        "--plugin-name",
+        "MicrosoftGraph",
+        "-d",
+        "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/dev/openApiDocs/v1.0/Mail.yml",
+        "-i",
+        "**/messages",
+        "--type",
+        "ApiManifest",
+        "--type",
+        "ApiPlugin",
+        "--type",
+        "OpenAI"
+      ],
+      "cwd": "${workspaceFolder}/samples/msgraph-mail/dotnet",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "env": {
+        "KIOTA_CONFIG_PREVIEW": "true"
+      }
     },
     {
       "name": "Launch Login (github - device)",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/src/kiota/bin/Debug/net7.0/kiota.dll",
-      "args": ["login", "github", "device"],
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net9.0/kiota.dll",
+      "args": [
+        "login",
+        "github",
+        "device"
+      ],
       "cwd": "${workspaceFolder}/src/kiota",
       "console": "internalConsole",
       "stopAtEntry": false
@@ -281,6 +404,25 @@
       "type": "coreclr",
       "request": "attach",
       "processId": "${command:pickProcess}"
+    },
+    {
+      "name": "Launch Http",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/kiota/bin/Debug/net8.0/kiota.dll",
+      "args": [
+        "generate",
+        "--openapi",
+        "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/dev/openApiDocs/v1.0/Mail.yml",
+        "--language",
+        "http",
+        "--output",
+        "${workspaceFolder}/samples/msgraph-mail/http",
+      ],
+      "cwd": "${workspaceFolder}/src/kiota",
+      "stopAtEntry": false,
+      "console": "internalConsole"
     }
   ]
 }

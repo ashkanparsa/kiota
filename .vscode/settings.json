@@ -22,6 +22,7 @@
   ],
   "cSpell.words": [
     "allof",
+    "apimanifest",
     "apisguru",
     "autoload",
     "Contoso",
@@ -34,6 +35,7 @@
     "ghes",
     "inheritdoc",
     "Kiota",
+    "microsoftgraph",
     "NETCOREAPP",
     "Nethttplibrary",
     "NETSTANDARD",
@@ -42,10 +44,13 @@
     "phpleague",
     "pwsh",
     "samespaceprefix",
-    "serializers"
+    "serializers",
+    "sonarcloud",
+    "Xunit"
   ],
   "java.configuration.updateBuildConfiguration": "automatic",
   "dotnet-test-explorer.testProjectPath": "tests/**/*.Tests.csproj",
   "editor.formatOnSave": true,
-  "dotnet.defaultSolution": "kiota.sln"
+  "dotnet.defaultSolution": "kiota.sln",
+  "azure-pipelines.1ESPipelineTemplatesSchemaFile": true
 }

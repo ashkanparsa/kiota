@@ -30,9 +30,12 @@ public enum CodeClassKind
 /// <summary>
 /// CodeClass represents an instance of a Class to be generated in source code
 /// </summary>
-public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITypeDefinition, IDiscriminatorInformationHolder, IDeprecableElement
+public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITypeDefinition, IDiscriminatorInformationHolder, IDeprecableElement, IAccessibleElement
 {
     private readonly ConcurrentDictionary<string, CodeProperty> PropertiesByWireName = new(StringComparer.OrdinalIgnoreCase);
+
+    public AccessModifier Access { get; set; } = AccessModifier.Public;
+
     public bool IsErrorDefinition
     {
         get; set;
@@ -45,12 +48,20 @@ public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITy
     {
         get; set;
     }
+    public string GetComponentSchemaName(CodeNamespace modelsNamespace)
+    {
+        if (Kind is not CodeClassKind.Model ||
+                Parent is not CodeNamespace parentNamespace ||
+                !parentNamespace.IsChildOf(modelsNamespace))
+            return string.Empty;
+        return $"{parentNamespace.Name[(modelsNamespace.Name.Length + 1)..]}.{Name}";
+    }
     public CodeIndexer? Indexer => InnerChildElements.Values.OfType<CodeIndexer>().FirstOrDefault(static x => !x.IsLegacyIndexer);
     public void AddIndexer(params CodeIndexer[] indexers)
     {
         if (indexers == null || Array.Exists(indexers, static x => x == null))
             throw new ArgumentNullException(nameof(indexers));
-        if (!indexers.Any())
+        if (indexers.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(indexers));
 
         foreach (var value in indexers)
@@ -74,7 +85,7 @@ public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITy
     {
         if (properties == null || properties.Any(static x => x == null))
             throw new ArgumentNullException(nameof(properties));
-        if (!properties.Any())
+        if (properties.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(properties));
 
         return properties.Select(property =>
@@ -167,7 +178,7 @@ public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITy
         ArgumentException.ThrowIfNullOrEmpty(serializationName);
 
         if (BaseClass is CodeClass currentParentClass)
-            if (currentParentClass.FindPropertyByWireName(serializationName) is CodeProperty currentProperty && !currentProperty.ExistsInBaseType)
+            if (currentParentClass.FindPropertyByWireName(serializationName) is CodeProperty currentProperty && !currentProperty.ExistsInBaseType && currentProperty.Kind is not CodePropertyKind.AdditionalData or CodePropertyKind.BackingStore)
                 return currentProperty;
             else
                 return currentParentClass.GetOriginalPropertyDefinedFromBaseType(serializationName);
@@ -185,15 +196,15 @@ public class CodeClass : ProprietableBlock<CodeClassKind, ClassDeclaration>, ITy
     {
         if (codeClasses == null || codeClasses.Any(static x => x == null))
             throw new ArgumentNullException(nameof(codeClasses));
-        if (!codeClasses.Any())
+        if (codeClasses.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(codeClasses));
         return AddRange(codeClasses);
     }
     public IEnumerable<CodeInterface> AddInnerInterface(params CodeInterface[] codeInterfaces)
     {
-        if (codeInterfaces == null || codeInterfaces.Any(x => x == null))
+        if (codeInterfaces == null || codeInterfaces.Any(static x => x == null))
             throw new ArgumentNullException(nameof(codeInterfaces));
-        if (!codeInterfaces.Any())
+        if (codeInterfaces.Length == 0)
             throw new ArgumentOutOfRangeException(nameof(codeInterfaces));
         return AddRange(codeInterfaces);
     }

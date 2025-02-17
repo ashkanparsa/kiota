@@ -135,37 +135,46 @@ public class PhpConventionService : CommonLanguageConventionService
         return codeParameter.Optional ? $"{doc}|null" : doc;
     }
 
-    private static string RemoveInvalidDescriptionCharacters(string originalDescription) => originalDescription.Replace("\\", "/", StringComparison.OrdinalIgnoreCase);
-    public override void WriteShortDescription(string description, LanguageWriter writer)
+    internal static string RemoveInvalidDescriptionCharacters(string originalDescription) => originalDescription.Replace("\\", "/", StringComparison.OrdinalIgnoreCase).Replace("*/", string.Empty, StringComparison.OrdinalIgnoreCase);
+    public override bool WriteShortDescription(IDocumentedElement element, LanguageWriter writer, string prefix = "", string suffix = "")
     {
         ArgumentNullException.ThrowIfNull(writer);
-        if (!string.IsNullOrEmpty(description))
-        {
-            writer.WriteLine(DocCommentStart);
-            writer.WriteLine(
-                $"{DocCommentPrefix}{RemoveInvalidDescriptionCharacters(description)}");
-            writer.WriteLine(DocCommentEnd);
-        }
+        ArgumentNullException.ThrowIfNull(element);
+        if (!element.Documentation.DescriptionAvailable) return false;
+        if (element is not CodeElement codeElement) return false;
+
+        var description = element.Documentation.GetDescription(type => GetTypeString(type, codeElement), normalizationFunc: RemoveInvalidDescriptionCharacters);
+
+        writer.WriteLine(DocCommentStart);
+        writer.WriteLine($"{DocCommentPrefix}{description}");
+        writer.WriteLine(DocCommentEnd);
+
+        return true;
     }
 
-    public void WriteLongDescription(CodeDocumentation codeDocumentation, LanguageWriter writer, IEnumerable<string>? additionalRemarks = default)
+    public void WriteLongDescription(IDocumentedElement element, LanguageWriter writer, IEnumerable<string>? additionalRemarks = default)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        if (codeDocumentation is null) return;
-        additionalRemarks ??= Enumerable.Empty<string>();
+        ArgumentNullException.ThrowIfNull(element);
+        if (element.Documentation is not { } documentation) return;
+        if (element is not CodeElement codeElement) return;
+        additionalRemarks ??= [];
 
         var enumerableArray = additionalRemarks as string[] ?? additionalRemarks.ToArray();
-        if (codeDocumentation.DescriptionAvailable || codeDocumentation.ExternalDocumentationAvailable ||
-            enumerableArray.Any())
+        if (documentation.DescriptionAvailable || documentation.ExternalDocumentationAvailable ||
+            enumerableArray.Length != 0)
         {
             writer.WriteLine(DocCommentStart);
-            if (codeDocumentation.DescriptionAvailable)
-                writer.WriteLine($"{DocCommentPrefix}{RemoveInvalidDescriptionCharacters(codeDocumentation.Description)}");
+            if (documentation.DescriptionAvailable)
+            {
+                var description = element.Documentation.GetDescription(type => GetTypeString(type, codeElement), normalizationFunc: RemoveInvalidDescriptionCharacters);
+                writer.WriteLine($"{DocCommentPrefix}{description}");
+            }
             foreach (var additionalRemark in enumerableArray.Where(static x => !string.IsNullOrEmpty(x)))
                 writer.WriteLine($"{DocCommentPrefix}{additionalRemark}");
 
-            if (codeDocumentation.ExternalDocumentationAvailable)
-                writer.WriteLine($"{DocCommentPrefix}@link {codeDocumentation.DocumentationLink} {codeDocumentation.DocumentationLabel}");
+            if (documentation.ExternalDocumentationAvailable)
+                writer.WriteLine($"{DocCommentPrefix}@link {documentation.DocumentationLink} {documentation.DocumentationLabel}");
             writer.WriteLine(DocCommentEnd);
         }
 
@@ -175,7 +184,7 @@ public class PhpConventionService : CommonLanguageConventionService
     {
         ArgumentNullException.ThrowIfNull(writer);
         var joined = string.Empty;
-        if (pathParameters?.ToList() is { } codeParameters && codeParameters.Any())
+        if (pathParameters?.ToList() is { } codeParameters && codeParameters.Count != 0)
         {
             joined = $", {string.Join(", ", codeParameters.Select(static x => $"${x.Name.ToFirstCharacterLowerCase()}"))}";
         }
@@ -240,7 +249,7 @@ public class PhpConventionService : CommonLanguageConventionService
     internal void AddRequestBuilderBody(CodeClass parentClass, string returnType, LanguageWriter writer, string? urlTemplateVarName = default, IEnumerable<CodeParameter>? pathParameters = default)
     {
         var codeParameters = pathParameters?.ToArray();
-        var codePathParametersSuffix = !(codeParameters?.Any() ?? false) ? string.Empty : $", {string.Join(", ", codeParameters.Select(x => $"${x.Name.ToFirstCharacterLowerCase()}"))}";
+        var codePathParametersSuffix = codeParameters?.Length > 0 ? $", {string.Join(", ", codeParameters.Select(x => $"${x.Name.ToFirstCharacterLowerCase()}"))}" : string.Empty;
         var urlTemplateParams = string.IsNullOrEmpty(urlTemplateVarName) && parentClass.GetPropertyOfKind(CodePropertyKind.PathParameters) is CodeProperty pathParametersProperty ?
             $"$this->{pathParametersProperty.Name}" :
             urlTemplateVarName;
@@ -251,7 +260,7 @@ public class PhpConventionService : CommonLanguageConventionService
     {
         if (pathParametersType == null) return;
         writer.WriteLine($"${TempDictionaryVarName} = {pathParametersReference};");
-        if (parameters.Any())
+        if (parameters.Length != 0)
             writer.WriteLines(parameters.Select(p =>
                 $"${TempDictionaryVarName}['{p.Item2}'] = {p.Item3};"
             ));

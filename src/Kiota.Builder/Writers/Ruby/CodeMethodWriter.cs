@@ -159,7 +159,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, RubyConventionServ
             {
                 var prefix = parentClass.Usings.FirstOrDefault(x => x.IsExternal && x.Name.Equals(serializationClassName, StringComparison.OrdinalIgnoreCase))?.Declaration?.Name;
                 if (!string.IsNullOrEmpty(prefix))
-                    prefix = $"{prefix.ToCamelCase(new char[] { '_' }).ToFirstCharacterUpperCase()}::";
+                    prefix = $"{prefix.ToPascalCase(['_'])}::";
                 writer.WriteLine($"MicrosoftKiotaAbstractions::ApiClientBuilder.{methodName}({prefix}{serializationClassName})");
             }
     }
@@ -255,7 +255,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, RubyConventionServ
             .OfType<CodeParameter>()
             .Select(static x => x.Name.ToSnakeCase())
             .ToArray();
-        if (requestInfoParameters.Any())
+        if (requestInfoParameters.Length != 0)
         {
             writer.IncreaseIndent();
             writer.WriteLine(requestInfoParameters.Aggregate(static (x, y) => $"{x}, {y}"));
@@ -301,24 +301,28 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, RubyConventionServ
             }
             if (requestParams.requestBody != null)
             {
+                var sanitizedRequestBodyContentType = codeElement.RequestBodyContentType.SanitizeSingleQuote();
                 if (requestParams.requestBody.Type.Name.Equals(conventions.StreamTypeName, StringComparison.OrdinalIgnoreCase))
                 {
                     if (requestParams.requestContentType is not null)
                         writer.WriteLine($"request_info.set_stream_content({requestParams.requestBody.Name}, {requestParams.requestContentType.Name})");
-                    else if (!string.IsNullOrEmpty(codeElement.RequestBodyContentType))
-                        writer.WriteLine($"request_info.set_stream_content({requestParams.requestBody.Name}, \"{codeElement.RequestBodyContentType}\")");
+                    else if (!string.IsNullOrEmpty(sanitizedRequestBodyContentType))
+                        writer.WriteLine($"request_info.set_stream_content({requestParams.requestBody.Name}, '{sanitizedRequestBodyContentType}')");
                 }
                 else if (parentClass.GetPropertyOfKind(CodePropertyKind.RequestAdapter) is CodeProperty requestAdapterProperty)
-                    writer.WriteLine($"request_info.set_content_from_parsable(@{requestAdapterProperty.Name.ToSnakeCase()}, \"{codeElement.RequestBodyContentType}\", {requestParams.requestBody.Name})");
+                    writer.WriteLine($"request_info.set_content_from_parsable(@{requestAdapterProperty.Name.ToSnakeCase()}, '{sanitizedRequestBodyContentType}', {requestParams.requestBody.Name})");
             }
         }
         if (parentClass.GetPropertyOfKind(CodePropertyKind.PathParameters) is CodeProperty urlTemplateParamsProperty &&
             parentClass.GetPropertyOfKind(CodePropertyKind.UrlTemplate) is CodeProperty urlTemplateProperty)
-            writer.WriteLines($"request_info.url_template = {GetPropertyCall(urlTemplateProperty, "''")}",
-                                $"request_info.path_parameters = {GetPropertyCall(urlTemplateParamsProperty, "''")}");
+        {
+            var urlTemplateValue = codeElement.HasUrlTemplateOverride ? $"'{codeElement.UrlTemplateOverride}'" : GetPropertyCall(urlTemplateProperty, "''");
+            writer.WriteLines($"request_info.url_template = {urlTemplateValue}",
+                            $"request_info.path_parameters = {GetPropertyCall(urlTemplateParamsProperty, "''")}");
+        }
         writer.WriteLine($"request_info.http_method = :{codeElement.HttpMethod.Value.ToString().ToUpperInvariant()}");
         if (codeElement.ShouldAddAcceptHeader)
-            writer.WriteLine($"request_info.headers.try_add('Accept', '{codeElement.AcceptHeaderValue}')");
+            writer.WriteLine($"request_info.headers.try_add('Accept', '{codeElement.AcceptHeaderValue.SanitizeSingleQuote()}')");
         writer.WriteLine("return request_info");
     }
     private static string GetPropertyCall(CodeProperty property, string defaultValue) => property == null ? defaultValue : $"@{property.NamePrefix}{property.Name.ToSnakeCase()}";
@@ -358,15 +362,20 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, RubyConventionServ
     }
     private void WriteMethodDocumentation(CodeMethod code, LanguageWriter writer)
     {
-        var isDescriptionPresent = !string.IsNullOrEmpty(code.Documentation.Description);
-        var parametersWithDescription = code.Parameters.Where(x => !string.IsNullOrEmpty(code.Documentation.Description)).OrderBy(static x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
-        if (isDescriptionPresent || parametersWithDescription.Any())
+        var parametersWithDescription = code.Parameters.Where(static x => x.Documentation.DescriptionAvailable).OrderBy(static x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (code.Documentation.DescriptionAvailable || parametersWithDescription.Length != 0)
         {
             writer.WriteLine(conventions.DocCommentStart);
-            if (isDescriptionPresent)
-                writer.WriteLine($"{conventions.DocCommentPrefix}{RubyConventionService.RemoveInvalidDescriptionCharacters(code.Documentation.Description)}");
+            if (code.Documentation.DescriptionAvailable)
+            {
+                var description = code.Documentation.GetDescription(type => conventions.GetTypeString(type, code), normalizationFunc: RubyConventionService.RemoveInvalidDescriptionCharacters);
+                writer.WriteLine($"{conventions.DocCommentPrefix}{description}");
+            }
             foreach (var paramWithDescription in parametersWithDescription)
-                writer.WriteLine($"{conventions.DocCommentPrefix}@param {paramWithDescription.Name.ToSnakeCase()} {RubyConventionService.RemoveInvalidDescriptionCharacters(paramWithDescription.Documentation.Description)}");
+            {
+                var description = paramWithDescription.Documentation.GetDescription(type => conventions.GetTypeString(type, code), normalizationFunc: RubyConventionService.RemoveInvalidDescriptionCharacters);
+                writer.WriteLine($"{conventions.DocCommentPrefix}@param {paramWithDescription.Name.ToSnakeCase()} {description}");
+            }
 
             if (code.IsAsync)
                 writer.WriteLine($"{conventions.DocCommentPrefix}@return a Fiber of {code.ReturnType.Name.ToSnakeCase()}");
