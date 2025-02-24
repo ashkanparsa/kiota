@@ -195,13 +195,17 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, GoConventionServic
                     WriteCollectionCast(propertyTypeImportName, valueVarName, "cast", writer, isInterfaceType ? string.Empty : "*", !isInterfaceType);
                     valueVarName = "cast";
                 }
-                else if (propertyType.TypeDefinition is CodeClass || propertyType.TypeDefinition is CodeInterface)
+                else if (propertyType.TypeDefinition is CodeClass || propertyType.TypeDefinition is CodeInterface || propertyType.TypeDefinition is CodeEnum)
                 {
+                    if (propertyType.TypeDefinition is CodeEnum)
+                    {
+                        propertyTypeImportName = conventions.GetTypeString(property.Type, parentClass, false, true);
+                    }
                     writer.StartBlock($"if {GetTypeAssertion(valueVarName, propertyTypeImportName, "cast", "ok")}; ok {{");
                     valueVarName = "cast";
                 }
                 writer.WriteLine($"{ResultVarName}.{property.Setter!.Name.ToFirstCharacterUpperCase()}({valueVarName})");
-                if (!propertyType.IsCollection && (propertyType.TypeDefinition is CodeClass || propertyType.TypeDefinition is CodeInterface))
+                if (!propertyType.IsCollection && (propertyType.TypeDefinition is CodeClass || propertyType.TypeDefinition is CodeInterface || propertyType.TypeDefinition is CodeEnum))
                     writer.CloseBlock();
                 writer.DecreaseIndent();
             }
@@ -569,7 +573,12 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, GoConventionServic
                                         .OrderBy(static x => x.Name))
         {
             var defaultValueReference = propWithDefault.DefaultValue;
-            if (defaultValueReference.StartsWith('"'))
+            if (propWithDefault.Type.IsNullable &&
+                    defaultValueReference.TrimQuotes().Equals("null", StringComparison.OrdinalIgnoreCase))
+            {// avoid setting null as a string.
+                defaultValueReference = "nil";
+            }
+            else if (defaultValueReference.StartsWith('"'))
             {
                 defaultValueReference = $"{propWithDefault.Name.ToFirstCharacterLowerCase()}Value";
                 var defaultValue = propWithDefault.DefaultValue;
@@ -579,6 +588,10 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, GoConventionServic
                     defaultValue =
                         enumDefinition.Options.FirstOrDefault(x => x.SerializationName.Equals(defaultValue, StringComparison.OrdinalIgnoreCase))?.Name ?? defaultValue;
                     defaultValue = $"{defaultValue.ToUpperInvariant()}_{enumDefinition.Name.ToUpperInvariant()}";
+                }
+                else if (propWithDefault.Type is CodeType propType && propType.Name.Equals("boolean", StringComparison.OrdinalIgnoreCase))
+                {
+                    defaultValue = defaultValue.TrimQuotes();
                 }
                 writer.WriteLine($"{defaultValueReference} := {defaultValue}");
                 defaultValueReference = $"&{defaultValueReference}";
@@ -632,7 +645,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, GoConventionServic
         var otherPropGetters = parentClass
                                 .GetPropertiesOfKind(CodePropertyKind.Custom)
                                 .Where(static x => !x.ExistsInBaseType && x.Getter != null)
-                                .Where(static x => x.Type is CodeType propertyType && !propertyType.IsCollection && propertyType.TypeDefinition is CodeClass)
+                                .Where(static x => x.Type is CodeType propertyType && !propertyType.IsCollection && propertyType.TypeDefinition is CodeInterface)
                                 .OrderBy(static x => x, CodePropertyTypeForwardComparer)
                                 .ThenBy(static x => x.Name)
                                 .Select(static x => x.Getter!.Name.ToFirstCharacterUpperCase())
@@ -838,7 +851,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, GoConventionServic
         var skipIndex = requestParams.requestBody == null ? 1 : 0;
         requestInfoParameters.AddRange(paramsList.Where(static x => x == null).Skip(skipIndex).Select(static x => "nil"));
 
-        var paramsCall = requestInfoParameters.Count != 0 ? requestInfoParameters.Aggregate(static (x, y) => $"{x}, {y}") : string.Empty;
+        var paramsCall = string.Join(", ", requestInfoParameters);
 
         writer.WriteLine(template(generatorMethodName, paramsCall));
     }

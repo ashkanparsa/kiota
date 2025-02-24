@@ -10,11 +10,11 @@ Every time a plugin is added, a copy of the OpenAPI document file will be stored
 
 An [API Manifest][def] file named `apimanifest.json` will be generated (if non existing) or updated (if already existing) in the root folder `./kiota` next to `workspace.json`. This API Manifest represents a snapshot of API dependencies and permissions required to access those APIs. This file will represent a concatenated surface of all APIs used across plugins and clients. Both files, `apimanifest.json` and `workspace.json` will be used to generate the code files. A new hash composed of the Kiota version, the OpenAPI document location and the properties of the manifest will be generated and would trigger an update to the [API Manifest][def].
 
-Developers can generate `apiplugin`, `openai` and `apimanifest` type of plugins. By generating plugins, three outputs will be generated: 1\) a sliced OpenAPI document named `{plugin-name}-openapi.json|yaml`, 2\) the plugin type you have chosen and  3\) an [app manifest](https://learn.microsoft.com/en-us/microsoftteams/platform/resources/schema/manifest-schema) file named `manifest.json` which conforms with the [schema](https://learn.microsoft.com/en-us/microsoftteams/platform/resources/schema/manifest-schema).
+Developers can generate `apiplugin`, `openai` and `apimanifest` type of plugins. By generating plugins, two outputs will be generated: 1\) a sliced OpenAPI document named `{plugin-name}-openapi.json|yaml` and 2\) the plugin type you have chosen.
 > [!NOTE]
-> In one's solution, there might be two different [API Manifests][def]. The `apimanifest.json` in the `./kiota` folder represents a single artifact surface of all APIs and it will always be generated. The second one will only be generated when providing `--type apimanifest` when generating a plugin, will be named `{plugin-name}-apimanifest.json` and saved in the chosen output directory.
+> In one's solution, there might be two different [API Manifests][def]. The `apimanifest.json` in the `./kiota` folder represents a single artifact surface of all APIs in your solution and it will always be generated. The second one will only be generated when providing `kiota plugin add --type apimanifest` when generating a plugin and will be named `{plugin-name}-apimanifest.json` and saved in the chosen output directory.
 
-Once the [`workspace.json`](workspace) file is generated and the OpenAPI document file is saved locally, the generation will be executed and the plugin, the sliced OpenAPI document and the `manifest.json` will become available.
+Once the [`workspace.json`](workspace) file is generated and the OpenAPI document file is saved locally, the generation will be executed and the plugin and the sliced OpenAPI document will become available.
 
 ### Sliced OpenAPI document
 
@@ -77,66 +77,6 @@ For `apimanifest`, the generated file will be named `{plugin-name}-apimanifest.j
 | publisherEmail | Defaults to the contact email from the OpenAPI document. If the contact email is not available, it defaults to `publisher-email@example.com`. |
 |  |  |
 
-### App manifest
-
-The app manifest file describes how one's plugin integrates into Microsoft 365 and it's not related to plugin types. App manifests are required for [publishing apps to Microsoft 365 app stores](https://learn.microsoft.com/en-us/partner-center/marketplace/checklist#step-3-check-that-your-manifest-is-compliant).
-For `manifest.json` file, we will:
-
-1. Add a plugin node to the `manifest.json` file if a `manifest.json` file already exists in the output directory.
-
-```jsonc
-"copilotExtensions": {
-  "plugins": [
-    {
-      "id": "{plugin-name}",
-      "file": "<generated_plugin_file>.json"
-    }
-  ]
-}
-```
-
-2. If a `plugins` node already exists and there is no plugin with the same `id`, add the new plugin information. If the `id` already exists, replace the current content.
-3. If there is no `manifest.json` file, we should create a basic manifest with only required information as the following example:
-
-```jsonc
-{
-  "$schema": "https://developer.microsoft.com/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json",
-  "manifestVersion": "devPreview",
-  "version": "1.0.0",
-  "id": "<generated_GUID>",
-  "developer": {
-    "name": "<Defaults to `contact.name` from the OpenAPI document. If the `contact.name` is not available, it defaults to `Kiota Generator, Inc.`>",
-    "websiteUrl": "<Defaults to `contact.url` from the OpenAPI document. If the `contact.url` is not available, it defaults to `https://www.example.com/contact/`>",
-    "privacyUrl": "<Defaults to `x-privacy-policy-url` extension from the OpenAPI document. If the `x-privacy-policy-url` is not available, it defaults to `https://www.example.com/privacy/`>",
-    "termsOfUseUrl": "<Defaults to `termsOfService` from the OpenAPI document. If the `termsOfService` is not available, it defaults to `https://www.example.com/terms/`>"
-  },
-  "packageName": "com.microsoft.kiota.plugin.<pluginame>",
-  "name": {
-    "short": "<plugin_name>",
-    "full": "API Plugin <plugin_name> for <OpenAPI document title>"
-  },
-  "description": {
-    "short": "API Plugin for <description from the OpenAPI document>. If the description is not available, it defaults to `API Plugin for <OpenAPI document title>`",
-    "full": "API Plugin for <description from the OpenAPI document>. If the description is not available, it defaults to `API Plugin for <OpenAPI document title>`"
-  },
-  "icons": {
-    "color": "color.png", //we could default it to a color version of Kiota logo 192x192 pixels where the icon symbol is 96x96 pixels or just use the same as [Teams Toolkit](https://github.com/OfficeDev/TeamsFx/blob/dev/templates/js/workflow/appPackage/color.png)
-    "outline": "outline.png" //we could default it to an outline Kiota icon 32x32 pixels or just use the same as [Teams Toolkit](https://github.com/OfficeDev/TeamsFx/blob/dev/templates/js/workflow/appPackage/outline.png).
-  },
-  "accentColor": "#FFFFFF", //always white
-  "copilotExtensions": {
-    "plugins": [
-      {
-        "id": "{plugin-name}",
-        "file": "<generated_plugin_file>.json"
-      }
-    ]
-  }
-}
-```
-
-4. [Validate](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/troubleshoot-manifest) the generated `manifest.json` file.
-
 ## Parameters
 
 | Parameters | Required | Example | Description | Telemetry |
@@ -146,6 +86,8 @@ For `manifest.json` file, we will:
 | `--include-path \| -i` | No | /repos/{owner}/{repo} | A glob pattern to include paths from generation. Accepts multiple values. Defaults to no value which includes everything. | Yes, without its value |
 | `--exclude-path \| -e` | No | /advisories | A glob pattern to exclude paths from generation. Accepts multiple values. Defaults to no value which excludes nothing. | Yes, without its value |
 | `--type \| -t` | Yes | openai | The target type of plugin for the generated output files. Accepts multiple values. Possible values are `apiplugin`, `openai` and `apimanifest`.| Yes |
+| `--authentication-type \| --at` | No | oauth2 | The authentication type that will be used to connect to the API. Accepts a single value corresponding to a supported OpenAPI security scheme. Possible values are `apikey`, `http`, `oauth2` and `openidconnect`.| |
+| `--authentication-ref-id \| --refid` | No | xxxxxxxx | The authentication reference id that will be used to connect to the API. Accepts a single string value.| |
 | `--skip-generation \| --sg` | No | true | When specified, the generation would be skipped. Defaults to false. | Yes |
 | `--output \| -o` | No | ./generated/plugins/github | The output directory or file path for the generated output files. This is relative to the location of `workspace.json`. Defaults to `./output`. | Yes, without its value |
 
@@ -155,7 +97,7 @@ For `manifest.json` file, we will:
 ## Using `kiota plugin add`
 
 ```bash
-kiota plugin add --plugins-name "GitHub" --openapi "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json" --include-path "/repos/{owner}/{repo}" --type apiplugin, apimanifest --output "./generated/plugins/github"
+kiota plugin add --plugins-name "GitHub" --openapi "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json" --include-path "/repos/{owner}/{repo}" --type apiplugin, apimanifest --authentication-type "oauth2" --authentication-ref-id "somerefid" --output "./generated/plugins/github"
 ```
 
 _The resulting `workspace.json` file will look like this:_
@@ -166,6 +108,8 @@ _The resulting `workspace.json` file will look like this:_
   "clients": {...}, //if any
   "plugins": {
     "GitHub": {
+      "authType": "OAuthPluginVault",
+      "authReferenceId": "somerefid",
       "descriptionLocation": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
       "includePatterns": ["/repos/{owner}/{repo}"],
       "excludePatterns": [],
@@ -210,7 +154,8 @@ _The resulting API Plugin named `github-apiplugin.json` will look like this:_
     {
       "type": "OpenApi",
       "auth": {
-        "type": "None"
+        "type": "OAuthPluginVault",
+        "reference_id": "somerefid"
       },
       "spec": {
         "url": "githubreposowner-openapi.yml"
@@ -303,7 +248,6 @@ _The resulting API Manifest named `apimanifest.json` in the `./kiota` folder (co
  └─generated
     └─plugins
       └─github
-          └─manifest.json # App manifest
           └─github-apimanifest.json # Specific API Manifest
           └─github-apiplugin.json #API Plugin
           └─github-openapi.json # Sliced and augmented OpenAPI document

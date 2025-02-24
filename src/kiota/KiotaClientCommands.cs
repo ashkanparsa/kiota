@@ -33,6 +33,7 @@ public static class KiotaClientCommands
     {
         var defaultConfiguration = new GenerationConfiguration();
         var languageOption = KiotaHost.GetLanguageOption();
+        var typeAccessModifierOption = KiotaHost.GetTypeAccessModifierOption();
         var outputOption = KiotaHost.GetOutputPathOption(defaultConfiguration.OutputPath);
         var descriptionOption = KiotaHost.GetDescriptionOption(defaultConfiguration.OpenAPIFilePath, true);
         var namespaceOption = KiotaHost.GetNamespaceOption(defaultConfiguration.ClientNamespaceName);
@@ -50,6 +51,7 @@ public static class KiotaClientCommands
             descriptionOption,
             outputOption,
             languageOption,
+            typeAccessModifierOption,
             clientNameOption,
             namespaceOption,
             logLevelOption,
@@ -67,6 +69,7 @@ public static class KiotaClientCommands
             DescriptionOption = descriptionOption,
             OutputOption = outputOption,
             LanguageOption = languageOption,
+            TypeAccessModifierOption = typeAccessModifierOption,
             ClassOption = clientNameOption,
             NamespaceOption = namespaceOption,
             LogLevelOption = logLevelOption,
@@ -104,6 +107,7 @@ public static class KiotaClientCommands
     public static Command GetEditCommand()
     {
         var languageOption = KiotaHost.GetOptionalLanguageOption();
+        var typeAccessModifierOption = KiotaHost.GetOptionalTypeAccessModifierOption();
         var outputOption = KiotaHost.GetOutputPathOption(string.Empty);
         var descriptionOption = KiotaHost.GetDescriptionOption(string.Empty);
         var namespaceOption = KiotaHost.GetNamespaceOption(string.Empty);
@@ -121,6 +125,7 @@ public static class KiotaClientCommands
             descriptionOption,
             outputOption,
             languageOption,
+            typeAccessModifierOption,
             clientNameOption,
             namespaceOption,
             logLevelOption,
@@ -138,6 +143,7 @@ public static class KiotaClientCommands
             DescriptionOption = descriptionOption,
             OutputOption = outputOption,
             LanguageOption = languageOption,
+            TypeAccessModifierOption = typeAccessModifierOption,
             ClassOption = clientNameOption,
             NamespaceOption = namespaceOption,
             LogLevelOption = logLevelOption,
@@ -174,7 +180,7 @@ public static class KiotaClientCommands
     internal static Option<bool> GetRefreshOption()
     {
         var refresh = new Option<bool>("--refresh", "Refreshes the client OpenAPI description before generating the client");
-        refresh.AddAlias("--r");
+        refresh.AddAlias("-r");
         return refresh;
     }
 }

@@ -69,17 +69,17 @@ internal class KiotaUpdateCommandHandler : BaseKiotaCommandHandler
                 DisplaySuccess($"Update of {locks.Length} clients completed successfully");
                 foreach (var configuration in configurations)
                     DisplayInfoHint(configuration.Language, configuration.OpenAPIFilePath, string.Empty);
-                if (Array.Exists(results, static x => x))
+                if (Array.Exists(results, static x => x) && !cleanOutput)
                     DisplayCleanHint("update");
                 return 0;
             }
             catch (Exception ex)
             {
 #if DEBUG
-                logger.LogCritical(ex, "error updating the client: {exceptionMessage}", ex.Message);
+                logger.LogCritical(ex, "error updating the client: {ExceptionMessage}", ex.Message);
                 throw; // so debug tools go straight to the source of the exception when attached
 #else
-                logger.LogCritical("error updating the client: {exceptionMessage}", ex.Message);
+                logger.LogCritical("error updating the client: {ExceptionMessage}", ex.Message);
                 return 1;
 #endif
             }

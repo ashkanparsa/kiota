@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Kiota.Builder.CodeDOM;
 using Kiota.Builder.Extensions;
 using Kiota.Builder.OrderComparers;
@@ -140,7 +141,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, CSharpConventionSe
                 }
                 else if (propertyType.TypeDefinition is CodeClass && propertyType.IsCollection || propertyType.TypeDefinition is null || propertyType.TypeDefinition is CodeEnum)
                 {
-                    var typeName = conventions.GetTypeString(propertyType, codeElement, true, false);
+                    var typeName = conventions.GetTypeString(propertyType, codeElement, true, propertyType.TypeDefinition is CodeEnum && propertyType.CollectionKind is not CodeTypeBase.CodeTypeCollectionKind.None);
                     var valueVarName = $"{property.Name.ToFirstCharacterLowerCase()}Value";
                     writer.WriteLine($"{(includeElse ? "else " : string.Empty)}if({parseNodeParameter.Name.ToFirstCharacterLowerCase()}.{GetDeserializationMethodName(propertyType, codeElement)} is {typeName} {valueVarName})");
                     writer.WriteBlock(lines: $"{ResultVarName}.{property.Name.ToFirstCharacterUpperCase()} = {valueVarName};");
@@ -161,7 +162,7 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, CSharpConventionSe
         {
             if (property.Type is CodeType propertyType)
             {
-                var typeName = conventions.GetTypeString(propertyType, codeElement, true, false);
+                var typeName = conventions.GetTypeString(propertyType, codeElement, true, propertyType.TypeDefinition is CodeEnum && propertyType.CollectionKind is not CodeTypeBase.CodeTypeCollectionKind.None);
                 var valueVarName = $"{property.Name.ToFirstCharacterLowerCase()}Value";
                 writer.WriteLine($"{(includeElse ? "else " : string.Empty)}if({parseNodeParameter.Name.ToFirstCharacterLowerCase()}.{GetDeserializationMethodName(propertyType, codeElement)} is {typeName} {valueVarName})");
                 writer.WriteBlock(lines: $"{ResultVarName}.{property.Name.ToFirstCharacterUpperCase()} = {valueVarName};");
@@ -250,11 +251,14 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, CSharpConventionSe
             {
                 defaultValue = $"{conventions.GetTypeString(propWithDefault.Type, currentMethod).TrimEnd('?')}.{defaultValue.Trim('"').CleanupSymbolName().ToFirstCharacterUpperCase()}";
             }
-            // avoid setting null as a string.
-            if (propWithDefault.Type.IsNullable &&
+            else if (propWithDefault.Type.IsNullable &&
                 defaultValue.TrimQuotes().Equals(NullValueString, StringComparison.OrdinalIgnoreCase))
-            {
+            { // avoid setting null as a string.
                 defaultValue = NullValueString;
+            }
+            else if (propWithDefault.Type is CodeType propType && propType.Name.Equals("boolean", StringComparison.OrdinalIgnoreCase))
+            {
+                defaultValue = defaultValue.TrimQuotes();
             }
             writer.WriteLine($"{propWithDefault.Name.ToFirstCharacterUpperCase()} = {defaultValue};");
         }
@@ -577,6 +581,48 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, CSharpConventionSe
                 !string.IsNullOrEmpty(urlTemplateProperty.DefaultValue))
             {
                 var thirdParameterName = string.Empty;
+                var segments = urlTemplateProperty.DefaultValue.Split('/');
+                var urlTemplateStringBuilder = new StringBuilder();
+                var queryBuilder = new StringBuilder();
+                for (int i = 0; i < segments.Length; i++)
+                {
+                    if (i != segments.Length - 1)
+                    {
+                        urlTemplateStringBuilder.Append(segments[i]);
+                        urlTemplateStringBuilder.Append("\", \"");
+                    }
+                    else// its the last segment
+                    {
+                        if (!segments[i].Contains("{?", StringComparison.OrdinalIgnoreCase))
+                        {
+                            urlTemplateStringBuilder.Append(segments[i]);
+                        }
+                        else
+                        {
+                            var prefixIndex = segments[i].IndexOf("{?", StringComparison.OrdinalIgnoreCase);
+                            var prefix = segments[i].Substring(0, prefixIndex);
+                            var suffix = segments[i].Substring(prefixIndex).Trim('{', '}', '?', '\"');
+                            var querySegments = suffix.Split(',');
+                            urlTemplateStringBuilder.Append(prefix + "\"");
+
+                            queryBuilder.Append("+ \"{?\" + string.Join(\",\",\"");
+                            foreach (var queryItem in querySegments)
+                            {
+                                queryBuilder.Append(queryItem);
+
+
+                                if (queryItem == querySegments.Last())
+                                    queryBuilder.Append("\")");
+                                else
+                                    queryBuilder.Append("\", \"");
+                            }
+                            queryBuilder.Append("+ \"}\"");
+
+                        }
+
+                    }
+
+                }
                 if (currentMethod.Parameters.OfKind(CodeParameterKind.PathParameters) is CodeParameter pathParametersParameter)
                     thirdParameterName = $", {pathParametersParameter.Name}";
                 else if (currentMethod.Parameters.OfKind(CodeParameterKind.RawUrl) is CodeParameter rawUrlParameter)
@@ -585,12 +631,12 @@ public class CodeMethodWriter : BaseElementWriter<CodeMethod, CSharpConventionSe
                     thirdParameterName = $", {pathParametersProperty.DefaultValue}";
                 if (currentMethod.Parameters.OfKind(CodeParameterKind.RequestAdapter) is CodeParameter requestAdapterParameter)
                 {
-                    return $" : base({requestAdapterParameter.Name.ToFirstCharacterLowerCase()}, {urlTemplateProperty.DefaultValue}{thirdParameterName})";
+                    return $" : base({requestAdapterParameter.Name.ToFirstCharacterLowerCase()}, string.Join(\"/\",{urlTemplateStringBuilder}){queryBuilder}{thirdParameterName})";
                 }
                 else if (parentClass.StartBlock?.Inherits?.Name?.Contains("CliRequestBuilder", StringComparison.Ordinal) == true)
                 {
                     // CLI uses a different base class.
-                    return $" : base({urlTemplateProperty.DefaultValue}{thirdParameterName})";
+                    return $" : base({urlTemplateStringBuilder}{thirdParameterName})";
                 }
             }
             return " : base()";

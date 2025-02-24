@@ -75,7 +75,7 @@ public class PythonConventionService : CommonLanguageConventionService
         ArgumentNullException.ThrowIfNull(targetElement);
         if (code is null)
             return string.Empty;
-        var collectionPrefix = code.CollectionKind == CodeTypeCollectionKind.None && includeCollectionInformation ? string.Empty : "List[";
+        var collectionPrefix = code.CollectionKind == CodeTypeCollectionKind.None && includeCollectionInformation ? string.Empty : "list[";
         var collectionSuffix = code.CollectionKind == CodeTypeCollectionKind.None && includeCollectionInformation ? string.Empty : "]";
         if (code is CodeComposedTypeBase currentUnion && currentUnion.Types.Any())
             return currentUnion.Types.Select(x => GetTypeString(x, targetElement, true, writer)).Aggregate((x, y) => $"Union[{x}, {TranslateAllTypes(y)}]");
@@ -87,7 +87,7 @@ public class PythonConventionService : CommonLanguageConventionService
                 typeName = targetElement.Parent.Name;
             if (code.ActionOf && writer != null)
                 return WriteInlineDeclaration(currentType, targetElement, writer);
-            var genericParameters = currentType.GenericTypeParameterValues.Count != 0 ?
+            var genericParameters = currentType.GenericTypeParameterValues.Any() ?
               $"[{string.Join(", ", currentType.GenericTypeParameterValues.Select(x => GetTypeString(x, targetElement, includeCollectionInformation)))}]" : string.Empty;
             return $"{collectionPrefix}{typeName}{genericParameters}{collectionSuffix}";
         }
@@ -95,7 +95,7 @@ public class PythonConventionService : CommonLanguageConventionService
         throw new InvalidOperationException($"type of type {code.GetType()} is unknown");
     }
 #pragma warning restore CA1822 // Method should be static
-    internal static string RemoveInvalidDescriptionCharacters(string originalDescription) => originalDescription.Replace("\\", "/", StringComparison.OrdinalIgnoreCase);
+    internal static string RemoveInvalidDescriptionCharacters(string originalDescription) => originalDescription.Replace("\\", "/", StringComparison.OrdinalIgnoreCase).Replace("\"\"\"", "\\\"\\\"\\\"", StringComparison.OrdinalIgnoreCase);
     public override string TranslateType(CodeType type)
     {
         ArgumentNullException.ThrowIfNull(type);
@@ -130,7 +130,7 @@ public class PythonConventionService : CommonLanguageConventionService
     {
         return typeName switch
         {
-            "int" or "float" or "str" or "bool" or "None" => true,
+            "int" or "float" or "str" or "bool" or "None" or "datetime.datetime" or "datetime.timedelta" or "datetime.date" or "datetime.time" => true,
             _ => false,
         };
     }

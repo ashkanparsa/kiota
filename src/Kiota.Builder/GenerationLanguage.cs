@@ -9,5 +9,7 @@ public enum GenerationLanguage
     Go,
     Swift,
     Ruby,
-    CLI
+    CLI,
+    Dart,
+    HTTP
 }
